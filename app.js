@@ -1,5 +1,5 @@
 'use strict';
-const APP_VERSION = '16';
+const APP_VERSION = '18';
 const $ = s => document.querySelector(s);
 
 // [혼자] = only when one child is the focus, [단체] = only when several kids are on screen.
@@ -129,6 +129,13 @@ const FONTS = [
   { id: 'Noto Sans KR', label: '노토 산스', w: 700, k: 0.95 }
 ];
 
+// colors each style may use when "색 랜덤" is on (index 0 = the original look)
+const PALETTE = {
+  variety: ['#FFD43B', '#FFFFFF', '#FF8FB1', '#7CF0C5', '#FFB347', '#8FD3FF'],
+  bar: ['rgba(0,0,0,0.62)', 'rgba(215,38,61,0.85)', 'rgba(12,68,124,0.85)', 'rgba(8,80,65,0.85)', 'rgba(60,52,137,0.85)'],
+  sticker: ['#FFFFFF', '#FFF3B0', '#FFD6E5', '#D6F5E8', '#DCEBFF']
+};
+const STYLE_LABEL = { variety: '예능형', bar: '자막바형', sticker: '스티커형' };
 const DEFAULT_POS = { variety: 84, bar: 88, sticker: 20 };
 const DEFAULT_FONT = { variety: 'Black Han Sans', bar: 'Do Hyeon', sticker: 'Jua' };
 
@@ -144,6 +151,10 @@ const defaults = {
   group: '',
   titleCaps: false,
   mixFonts: false,
+  mixStyles: false,
+  styleList: ['variety', 'sticker'],
+  randColor: false,
+  randPos: false,
   people: true,
   mixList: ['Black Han Sans', 'Jua', 'Do Hyeon'],
   showDate: false,
@@ -190,7 +201,14 @@ function buildFontChips() {
     `<button class="chip" data-v="${f.id}"><div class="fx" style="font-family:'${f.id}';font-weight:${f.w}">${f.label}</div></button>`).join('');
 }
 function syncUI() {
-  document.querySelectorAll('#styles .chip').forEach(b => b.classList.toggle('on', b.dataset.v === S.style));
+  document.querySelectorAll('#styles .chip').forEach(b => {
+    b.classList.toggle('on', S.mixStyles ? S.styleList.includes(b.dataset.v) : b.dataset.v === S.style);
+    b.classList.toggle('edit', S.mixStyles && b.dataset.v === S.style);
+  });
+  $('#mixStyles').checked = S.mixStyles; $('#randColor').checked = S.randColor; $('#randPos').checked = S.randPos;
+  $('#styleHint').textContent = S.mixStyles
+    ? `${S.styleList.map(x => STYLE_LABEL[x]).join(' → ')} 순서로 장면마다 번갈아 나와요. 아래 폰트·크기·위치는 밑줄 친 ${STYLE_LABEL[S.style]}에 적용돼요 (한 번 더 누르면 빼기).`
+    : '';
   document.querySelectorAll('#fonts .chip').forEach(b => b.classList.toggle('on', S.mixFonts ? S.mixList.includes(b.dataset.v) : b.dataset.v === S.font[S.style]));
   $('#mixFonts').checked = S.mixFonts;
   $('#fontHint').textContent = S.mixFonts ? `섞을 폰트를 2개 이상 골라주세요 (지금 ${S.mixList.length}개). 장면마다 돌아가며 바뀌어요.` : '';
@@ -208,7 +226,20 @@ function syncUI() {
 }
 function onChange(replan) { save(); syncUI(); if (replan) rebuildPlan(true); preview(); }
 
-$('#styles').addEventListener('click', e => { const b = e.target.closest('.chip'); if (!b) return; S.style = b.dataset.v; onChange(); ensureFont().then(preview); });
+$('#styles').addEventListener('click', e => {
+  const b = e.target.closest('.chip'); if (!b) return; const v = b.dataset.v;
+  if (S.mixStyles) {
+    if (S.styleList.includes(v) && S.style === v) {
+      if (S.styleList.length <= 2) { toast('최소 2개는 골라야 해요'); return; }
+      S.styleList = S.styleList.filter(x => x !== v); S.style = S.styleList[0];
+    } else { if (!S.styleList.includes(v)) S.styleList = [...S.styleList, v]; S.style = v; }
+    save(); syncUI(); assignFonts(); ensureFont().then(preview); return;
+  }
+  S.style = v; onChange(); assignFonts(); ensureFont().then(preview);
+});
+$('#mixStyles').onchange = e => { S.mixStyles = e.target.checked; if (S.mixStyles && !S.styleList.includes(S.style)) S.style = S.styleList[0]; save(); syncUI(); assignFonts(); ensureFont().then(preview); };
+$('#randColor').onchange = e => { S.randColor = e.target.checked; save(); assignFonts(); };
+$('#randPos').onchange = e => { S.randPos = e.target.checked; save(); assignFonts(); };
 $('#fonts').addEventListener('click', e => {
   const b = e.target.closest('.chip'); if (!b) return; const v = b.dataset.v;
   if (S.mixFonts) {
@@ -219,10 +250,25 @@ $('#fonts').addEventListener('click', e => {
   S.font[S.style] = v; onChange(); ensureFont().then(preview);
 });
 $('#mixFonts').onchange = e => { S.mixFonts = e.target.checked; save(); syncUI(); assignFonts(); ensureFont().then(preview); };
-// rotate through the chosen fonts scene by scene, never the same twice in a row
+// per-caption look: font, style, color and a small position wobble, decided once so preview == video
+const rnd = (a, b) => a + Math.random() * (b - a);
 function assignFonts() {
-  const list = S.mixList.filter(id => FONTS.some(f => f.id === id));
-  captions.forEach((c, i) => { c.font = list.length ? list[i % list.length] : null; });
+  const fonts = S.mixList.filter(id => FONTS.some(f => f.id === id));
+  const styles = S.mixStyles ? S.styleList.filter(x => STYLE_LABEL[x]) : [S.style];
+  let lastColor = -1;
+  captions.forEach((c, i) => {
+    c.font = fonts.length ? fonts[i % fonts.length] : null;
+    const style = styles.length ? styles[i % styles.length] : S.style;
+    let color = 0;
+    if (S.randColor) { const n = PALETTE[style].length; do { color = Math.random() * n | 0; } while (n > 1 && color === lastColor); }
+    lastColor = color;
+    c.look = {
+      style, color,
+      dy: S.randPos ? rnd(-6, 6) : 0,
+      dx: S.randPos ? (style === 'sticker' ? rnd(-0.14, 0.14) : rnd(-0.04, 0.04)) : 0,
+      rot: style === 'sticker' ? (S.randPos ? (Math.random() < 0.5 ? -1 : 1) * rnd(0.04, 0.13) : -0.09) : 0
+    };
+  });
   preview();
 }
 $('#segs').addEventListener('click', e => { const b = e.target.closest('.chip'); if (!b) return; S.seg = +b.dataset.v; onChange(true); });
@@ -517,13 +563,13 @@ function outToSrc(t) {
 
 // ---------- drawing ----------
 function fontInfo(cap) {
-  const id = S.mixFonts && cap && cap.font ? cap.font : S.font[S.style];
+  const id = S.mixFonts && cap && cap.font ? cap.font : S.font[(cap && cap.look && cap.look.style) || S.style];
   return FONTS.find(f => f.id === id) || FONTS[0];
 }
 // Korean web fonts download in pieces per character, so ask for exactly the characters we'll draw;
 // otherwise canvas silently falls back to the phone's default font for missing glyphs.
 function ensureFont(waitMs = 4000) {
-  const ids = new Set([S.font[S.style], ...(S.mixFonts ? S.mixList : [])]);
+  const ids = new Set([S.font[S.style], ...(S.mixStyles ? S.styleList.map(x => S.font[x]) : []), ...(S.mixFonts ? S.mixList : [])]);
   const fs = FONTS.filter(f => ids.has(f.id));
   if (!document.fonts || !document.fonts.load) return Promise.resolve();
   const chars = [...new Set(captions.map(c => c.text).join('') + '태권도 수업 화이팅 0123456789!?')].join('');
@@ -584,30 +630,33 @@ function drawOverlay(c, W, H, tOut, opts = {}) {
   }
   if (!cap.trim() || local > show) return;
 
+  const look = (cur && cur.look) || { style: S.style, color: 0, dy: 0, dx: 0, rot: -0.09 };
+  const st = look.style, col = PALETTE[st][look.color] || PALETTE[st][0];
   const k = (S.size / 100) * f.k;
-  const cy = H * S.pos[S.style] / 100;
+  const cy = H * Math.min(94, Math.max(6, S.pos[st] + look.dy)) / 100;
+  const cx = W / 2 + W * look.dx;
   const fadeOut = Math.min(1, (show - local) / 0.2);
   c.save(); c.textAlign = 'center'; c.textBaseline = 'middle'; c.lineJoin = 'round';
 
-  if (S.style === 'variety') {
+  if (st === 'variety') {
     const fs = U * 0.095 * k; c.font = `${f.w} ${fs}px "${f.id}"`;
     const lines = wrap(c, cap, W * 0.88), lh = fs * 1.18;
     const pop = local < 0.28 ? 1 + 0.4 * (1 - local / 0.28) : 1;
-    c.globalAlpha = fadeOut; c.translate(W / 2, cy); c.scale(pop, pop);
+    c.globalAlpha = fadeOut; c.translate(cx, cy); c.scale(pop, pop);
     const y0 = -(lines.length - 1) * lh / 2;
     lines.forEach((l, i) => {
       const y = y0 + i * lh;
       c.lineWidth = fs * 0.24; c.strokeStyle = '#1f1f1f'; c.strokeText(l, 0, y);
-      c.fillStyle = '#FFD43B'; c.fillText(l, 0, y);
+      c.fillStyle = col; c.fillText(l, 0, y);
     });
-  } else if (S.style === 'bar') {
+  } else if (st === 'bar') {
     const fs = U * 0.062 * k; c.font = `${f.w} ${fs}px "${f.id}"`;
     const lines = wrap(c, cap, W * 0.82), lh = fs * 1.3;
     const tw = Math.max(...lines.map(l => c.measureText(l).width));
     const pad = fs * 0.7, bh = lines.length * lh + pad * 0.9, bw = tw + pad * 2;
     const a = Math.min(1, local / 0.2) * fadeOut, slide = (1 - Math.min(1, local / 0.2)) * fs * 0.5;
-    c.globalAlpha = a; c.translate(W / 2, cy + slide);
-    c.fillStyle = 'rgba(0,0,0,0.62)'; rr(c, -bw / 2, -bh / 2, bw, bh, fs * 0.3); c.fill();
+    c.globalAlpha = a; c.translate(cx, cy + slide);
+    c.fillStyle = col; rr(c, -bw / 2, -bh / 2, bw, bh, fs * 0.3); c.fill();
     c.fillStyle = '#fff';
     lines.forEach((l, i) => c.fillText(l, 0, -(lines.length - 1) * lh / 2 + i * lh + fs * 0.04));
   } else {
@@ -616,8 +665,10 @@ function drawOverlay(c, W, H, tOut, opts = {}) {
     const tw = Math.max(...lines.map(l => c.measureText(l).width));
     const px = fs * 0.85, py = fs * 0.5, bw = tw + px * 2, bh = lines.length * lh + py * 2;
     const sc = local < 0.4 ? Math.max(0.01, easeBack(local / 0.4)) : 1;
-    c.globalAlpha = fadeOut; c.translate(W / 2, cy); c.rotate(-0.09); c.scale(sc, sc);
-    c.fillStyle = '#fff'; rr(c, -bw / 2, -bh / 2, bw, bh, lines.length > 1 ? fs * 0.6 : bh / 2); c.fill();
+    // keep the tilted sticker fully on screen
+    const half = bw / 2 + fs * 0.3, sx = Math.min(W - half, Math.max(half, cx));
+    c.globalAlpha = fadeOut; c.translate(sx, cy); c.rotate(look.rot); c.scale(sc, sc);
+    c.fillStyle = col; rr(c, -bw / 2, -bh / 2, bw, bh, lines.length > 1 ? fs * 0.6 : bh / 2); c.fill();
     c.lineWidth = Math.max(2, U * 0.008); c.strokeStyle = '#1f1f1f'; c.stroke();
     c.fillStyle = '#1f1f1f';
     lines.forEach((l, i) => c.fillText(l, 0, -(lines.length - 1) * lh / 2 + i * lh + fs * 0.04));
@@ -696,6 +747,31 @@ function previewAt(i) {
   refreshPreview();
 }
 
+// ---------- loading overlay ----------
+// steps: load → motion → model → people → ready. Shown in the middle of the screen so it never looks frozen.
+const LOAD_STEPS = [['load', '영상 불러오기'], ['motion', '활동 장면 찾기'], ['model', 'AI 준비'], ['people', '혼자/단체 찾기'], ['ready', '자막 만들기']];
+let loaderDepth = 0;
+const paint = () => new Promise(r => requestAnimationFrame(() => setTimeout(r, 0)));
+function showLoader() {
+  if (loaderDepth++ === 0) {
+    $('#loader').classList.remove('hidden');
+    $('#loaderSteps').innerHTML = LOAD_STEPS
+      .filter(([id]) => (id !== 'motion' || S.smart) && ((id !== 'model' && id !== 'people') || (S.people && !detectorFailed)))
+      .map(([id, label]) => `<li data-s="${id}">${label}</li>`).join('');
+  }
+}
+function setLoader(step, text, pct) {
+  let passed = true;
+  document.querySelectorAll('#loaderSteps li').forEach(li => {
+    if (li.dataset.s === step) { li.className = 'now'; passed = false; } else li.className = passed ? 'done' : '';
+  });
+  $('#loaderText').textContent = text || '';
+  const bar = $('#loaderBar');
+  bar.classList.toggle('indet', pct == null);
+  bar.firstElementChild.style.width = pct == null ? '' : Math.round(Math.min(1, Math.max(0, pct)) * 100) + '%';
+}
+function hideLoader(force) { loaderDepth = force ? 0 : Math.max(0, loaderDepth - 1); if (!loaderDepth) $('#loader').classList.add('hidden'); }
+
 // ---------- clips ----------
 $('#pick').onclick = () => $('#file').click();
 $('#add').onclick = () => $('#file').click();
@@ -705,8 +781,10 @@ $('#file').onchange = async e => {
   $('#result').classList.add('hidden');
   $('#info').textContent = '영상 불러오는 중…';
   video.muted = true;
-  let bad = 0;
+  showLoader();
+  let bad = 0, n = 0;
   for (const f of files) {
+    setLoader('load', `영상 ${++n} / ${files.length} 불러오는 중… 큰 영상은 조금 걸려요`, (n - 1) / files.length); await paint();
     const url = URL.createObjectURL(f);
     const s = { name: f.name, url, dur: 0, w: 0, h: 0, scores: null, dt: 1, cls: guessCls(f.name) || S.defCls };
     sources.push(s);
@@ -718,7 +796,7 @@ $('#file').onchange = async e => {
   }
   curSrc = -1;
   if (bad) toast(`열 수 없는 영상 ${bad}개는 뺐어요`);
-  await clipsChanged();
+  try { await clipsChanged(); } finally { hideLoader(); }
 };
 function renderClips() {
   const box = $('#clips');
@@ -750,7 +828,8 @@ $('#clips').addEventListener('click', async e => {
   if (b.dataset.a === 'down' && i < sources.length - 1) [sources[i + 1], sources[i]] = [sources[i], sources[i + 1]];
   if (b.dataset.a === 'del') { URL.revokeObjectURL(sources[i].url); sources.splice(i, 1); }
   curSrc = -1;
-  await clipsChanged();
+  showLoader();
+  try { await clipsChanged(); } finally { hideLoader(); }
 });
 async function clipsChanged() {
   renderClips();
@@ -763,6 +842,7 @@ async function clipsChanged() {
   canvas.classList.remove('hidden'); $('#empty').classList.add('hidden');
   await analyzeAll();
   await detectPeople();
+  setLoader('ready', '자막 만들고 미리보기 준비 중…', null); await paint();
   rebuildPlan(false);
   await ensureFont();
   previewT = 1.2; refreshPreview(); await seekQ;
@@ -775,6 +855,7 @@ async function analyzeAll() {
   const todo = sources.filter(s => !s.scores);
   if (!todo.length) return;
   analyzing = true; $('#make').disabled = true;
+  showLoader(); setLoader('motion', '움직임이 많은 장면을 찾는 중…', 0); await paint();
   const totalDur = todo.reduce((a, s) => a + s.dur, 0);
   const dt = Math.max(0.75, totalDur / 400);
   const c = document.createElement('canvas'); const cx = c.getContext('2d', { willReadFrequently: true });
@@ -794,12 +875,14 @@ async function analyzeAll() {
         for (let p = 0, q = 0; p < d.length; p += 4, q++) g[q] = d[p] * 0.3 + d[p + 1] * 0.59 + d[p + 2] * 0.11;
         let diff = 0; if (prev) { for (let q = 0; q < g.length; q++) diff += Math.abs(g[q] - prev[q]); diff /= g.length; }
         scores.push(diff); prev = g;
-        $('#planInfo').textContent = `활동 장면 찾는 중… ${Math.round(Math.min(1, (doneDur + t) / totalDur) * 100)}%`;
+        const pm = Math.min(1, (doneDur + t) / totalDur);
+        $('#planInfo').textContent = `활동 장면 찾는 중… ${Math.round(pm * 100)}%`;
+        setLoader('motion', `움직임이 많은 장면을 찾는 중… ${Math.round(pm * 100)}%`, pm);
       }
       if (scores.length > 1) scores[0] = scores[1];
       s.scores = scores; s.dt = dt; doneDur += s.dur;
     }
-  } finally { analyzing = false; curSrc = -1; }
+  } finally { analyzing = false; curSrc = -1; hideLoader(); }
 }
 
 // ---------- solo / group detection (on-device person detector, bundled with the app) ----------
@@ -812,6 +895,20 @@ async function loadDetector() {
   try {
     if (!window.tf) await addScript('lib/tf.min.js');
     if (!window.cocoSsd) await addScript('lib/coco-ssd.min.js');
+    // download the weights ourselves first so we can show real progress; cocoSsd then reads them from cache
+    try {
+      const mj = await (await fetch('models/coco-ssd/model.json')).json();
+      const paths = mj.weightsManifest.flatMap(g => g.paths);
+      let got = 0; const total = 18e6;
+      for (const p of paths) {
+        const res = await fetch('models/coco-ssd/' + p);
+        if (res.body && res.body.getReader) {
+          const rd = res.body.getReader();
+          for (;;) { const { done, value } = await rd.read(); if (done) break; got += value.length; setLoader('model', `AI 모델 받는 중… ${(got / 1e6).toFixed(1)} / 18MB (처음 한 번만)`, got / total); }
+        } else { got += (await res.arrayBuffer()).byteLength; setLoader('model', `AI 모델 받는 중… ${(got / 1e6).toFixed(1)} / 18MB (처음 한 번만)`, got / total); }
+      }
+    } catch (e) {}
+    setLoader('model', 'AI 준비 중…', null); await paint();
     detector = await cocoSsd.load({ modelUrl: 'models/coco-ssd/model.json' });
   } catch (e) { console.error(e); detectorFailed = true; detector = null; }
   return detector;
@@ -831,10 +928,12 @@ async function detectPeople() {
   const todo = sources.filter(s => !s.people);
   if (!todo.length) return;
   analyzing = true; $('#make').disabled = true;
+  showLoader();
   $('#planInfo').textContent = '혼자/단체 장면 찾는 중… (처음엔 AI 모델을 받느라 조금 걸려요)';
+  setLoader('model', 'AI 준비 중…', null); await paint();
   const det = await loadDetector();
   if (!det) {
-    analyzing = false;
+    analyzing = false; hideLoader();
     toast(location.protocol === 'file:' ? '파일로 열어서 혼자/단체 감지가 꺼졌어요' : '혼자/단체 감지를 못 했어요. 자막 옆 버튼으로 직접 바꿀 수 있어요');
     todo.forEach(s => s.people = []); return;
   }
@@ -852,11 +951,13 @@ async function detectPeople() {
         let label = null;
         try { label = frameLabel(await det.detect(c, 20, 0.4), c.height); } catch (e) {}
         people.push({ t, label });
-        $('#planInfo').textContent = `혼자/단체 장면 찾는 중… ${Math.round(Math.min(1, (doneDur + t) / totalDur) * 100)}%`;
+        const pp = Math.min(1, (doneDur + t) / totalDur);
+        $('#planInfo').textContent = `혼자/단체 장면 찾는 중… ${Math.round(pp * 100)}%`;
+        setLoader('people', `한 명인지 여럿인지 보는 중… ${Math.round(pp * 100)}%`, pp);
       }
       s.people = people; doneDur += s.dur;
     }
-  } finally { analyzing = false; curSrc = -1; }
+  } finally { analyzing = false; curSrc = -1; hideLoader(); }
 }
 
 // ---------- audio / music ----------
