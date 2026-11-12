@@ -1,5 +1,5 @@
 'use strict';
-const APP_VERSION = '19';
+const APP_VERSION = '23';
 const $ = s => document.querySelector(s);
 
 // [혼자] = only when one child is the focus, [단체] = only when several kids are on screen.
