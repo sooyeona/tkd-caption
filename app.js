@@ -1,5 +1,5 @@
 'use strict';
-const APP_VERSION = '18';
+const APP_VERSION = '19';
 const $ = s => document.querySelector(s);
 
 // [혼자] = only when one child is the focus, [단체] = only when several kids are on screen.
@@ -1101,21 +1101,21 @@ $('#make').onclick = async () => {
     await useSrc(plan[0].src); await seekTo(plan[0].start);
     drawVideo(ctx, W, H); drawOverlay(ctx, W, H, 0);
     if (actx) startMusic(total);
-    rec.start(1000);
+    // the recorder (and music clock) only run while a segment is really playing,
+    // so seeking and the start-up delay of play() never end up in the video as frozen frames
+    holdRecording(rec);
     for (let i = 0; i < plan.length && !cancelled; i++) {
       const seg = plan[i];
       if (i > 0) {
-        if (rec.state === 'recording' && rec.pause) try { rec.pause(); } catch (e) {}
-        if (actx && actx.suspend) await actx.suspend().catch(() => {});
         await useSrc(seg.src); await seekTo(seg.start);
         drawVideo(ctx, W, H); drawOverlay(ctx, W, H, offset);
-        if (actx) await actx.resume().catch(() => {});
-        if (rec.state === 'paused') try { rec.resume(); } catch (e) {}
       }
-      await playSegment(seg, offset, W, H);
+      await playSegment(seg, offset, W, H, rec);
+      holdRecording(rec);
       offset += seg.end - seg.start;
     }
     video.pause();
+    if (rec.state === 'inactive') { rec.start(); }
     rec.stop(); await stopped;
     stopMusic();
     if (cancelled) { toast('취소했어요'); return; }
@@ -1140,25 +1140,53 @@ $('#make').onclick = async () => {
 };
 $('#cancel').onclick = () => { cancelled = true; video.pause(); };
 
-function playSegment(seg, offset, W, H) {
+// pause/resume must be synchronous: awaiting the audio clock here let whole scenes slip past unrecorded
+function holdRecording(rec) {
+  if (rec.state === 'recording' && rec.pause) try { rec.pause(); } catch (e) {}
+  if (actx && actx.state === 'running' && actx.suspend) actx.suspend().catch(() => {});
+}
+function releaseRecording(rec) {
+  if (rec.state === 'inactive') rec.start(1000);      // first real frame of the first scene
+  else if (rec.state === 'paused') try { rec.resume(); } catch (e) {}
+}
+// draw on every new decoded video frame (requestVideoFrameCallback) instead of on screen refresh,
+// falling back to requestAnimationFrame where it isn't supported
+const hasRVFC = 'requestVideoFrameCallback' in HTMLVideoElement.prototype;
+function playSegment(seg, offset, W, H, rec) {
   return new Promise((resolve, reject) => {
-    let finished = false, lastT = -1, stall = 0;
+    let finished = false, started = false, lastT = -1, stall = 0;
     const end = () => { if (finished) return; finished = true; video.pause(); resolve(); };
-    const tick = () => {
-      if (finished) return;
-      if (cancelled) return end();
+    const draw = () => {
       const t = video.currentTime;
       const tOut = offset + Math.max(0, t - seg.start);
       drawVideo(ctx, W, H);
       drawOverlay(ctx, W, H, tOut);
       setProg(tOut);
+      return t;
+    };
+    const tick = () => {
+      if (finished) return;
+      if (cancelled) return end();
+      const t = draw();
+      if (!started) { started = true; releaseRecording(rec); }
       if (t >= seg.end - 0.02 || video.ended) return end();
       if (t === lastT) { if (++stall > 300) return end(); } else { stall = 0; lastT = t; }
-      requestAnimationFrame(tick);
+      next();
     };
-    video.play()
+    const next = () => hasRVFC ? video.requestVideoFrameCallback(tick) : requestAnimationFrame(tick);
+    // safety net for stalls: frame callbacks stop firing when playback stops, so watch the clock too
+    let lastSeen = -1, still = 0;
+    const guard = setInterval(() => {
+      if (finished) return clearInterval(guard);
+      const t = video.currentTime;
+      if (!started && t > seg.start + 0.05) { started = true; releaseRecording(rec); }
+      if (video.ended || t >= seg.end - 0.02) { draw(); clearInterval(guard); return end(); }
+      if (t === lastSeen) { if (++still >= 10) { clearInterval(guard); return end(); } } else { still = 0; lastSeen = t; }
+    }, 500);
+    const resumeAudio = actx && actx.state !== 'running' ? actx.resume().catch(() => {}) : Promise.resolve();
+    resumeAudio.then(() => video.play())
       .catch(() => { video.muted = true; return video.play(); })
-      .then(() => requestAnimationFrame(tick)).catch(reject);
+      .then(() => next()).catch(err => { clearInterval(guard); reject(err); });
   });
 }
 
