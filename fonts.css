@@ -1,0 +1,8 @@
+/* Korean fonts bundled with the app (SIL Open Font License 1.1, via Fontsource) */
+@font-face{font-family:'Black Han Sans';font-style:normal;font-weight:400;font-display:swap;src:url(fonts/black-han-sans-400.woff2) format('woff2')}
+@font-face{font-family:'Do Hyeon';font-style:normal;font-weight:400;font-display:swap;src:url(fonts/do-hyeon-400.woff2) format('woff2')}
+@font-face{font-family:'Jua';font-style:normal;font-weight:400;font-display:swap;src:url(fonts/jua-400.woff2) format('woff2')}
+@font-face{font-family:'Gamja Flower';font-style:normal;font-weight:400;font-display:swap;src:url(fonts/gamja-flower-400.woff2) format('woff2')}
+@font-face{font-family:'Nanum Pen Script';font-style:normal;font-weight:400;font-display:swap;src:url(fonts/nanum-pen-script-400.woff2) format('woff2')}
+@font-face{font-family:'Noto Sans KR';font-style:normal;font-weight:500;font-display:swap;src:url(fonts/noto-sans-kr-500.woff2) format('woff2')}
+@font-face{font-family:'Noto Sans KR';font-style:normal;font-weight:700;font-display:swap;src:url(fonts/noto-sans-kr-700.woff2) format('woff2')}

@@ -1,0 +1,233 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>태권 자막</title>
+<meta name="theme-color" content="#F6F4EF">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="태권 자막">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="icon" href="icon-180.png">
+<link rel="stylesheet" href="fonts.css?v=16">
+<style>
+:root{--bg:#F6F4EF;--card:#fff;--ink:#1f1f1f;--sub:#6b6a66;--line:#e4e1d9;--red:#D7263D;--yellow:#FFD43B}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;background:var(--bg);color:var(--ink);font-family:"Noto Sans KR",-apple-system,system-ui,sans-serif}
+body{padding:env(safe-area-inset-top) 0 calc(env(safe-area-inset-bottom) + 24px)}
+main{max-width:560px;margin:0 auto;padding:16px}
+header{display:flex;align-items:center;gap:10px;padding:8px 2px 14px}
+header .belt{width:34px;height:10px;background:var(--ink);border-radius:3px;position:relative}
+header .belt:after{content:"";position:absolute;left:13px;top:-4px;width:8px;height:18px;background:var(--ink);border-radius:2px}
+header h1{font-family:"Black Han Sans";font-weight:400;font-size:26px;margin:0;letter-spacing:.5px}
+header h1 span{color:var(--red)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:16px;margin-bottom:14px}
+.card h2{font-size:15px;font-weight:700;margin:0 0 12px;display:flex;align-items:center;gap:8px}
+.card h2 .n{display:inline-grid;place-items:center;width:22px;height:22px;border-radius:50%;background:var(--ink);color:#fff;font-size:12px}
+.hint{font-size:13px;color:var(--sub);margin:6px 0 0;line-height:1.5}
+.btn{appearance:none;border:0;border-radius:12px;padding:14px 16px;font:inherit;font-weight:700;font-size:16px;background:var(--ink);color:#fff;width:100%;cursor:pointer}
+.btn.red{background:var(--red)}
+.btn.ghost{background:transparent;color:var(--ink);border:1.5px solid var(--ink)}
+.btn.sm{padding:8px 12px;font-size:13px;width:auto;border-radius:10px;white-space:nowrap;flex:none}
+.btn:disabled{opacity:.4}
+.row{display:flex;gap:8px;align-items:center}
+.chips{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.chip{border:1.5px solid var(--line);background:#fff;border-radius:12px;padding:10px 6px;text-align:center;font-size:14px;cursor:pointer;color:var(--ink)}
+.chip.on{border-color:var(--ink);background:var(--ink);color:#fff}
+.chip small{display:block;font-size:11px;opacity:.7;margin-top:2px;font-family:"Noto Sans KR"}
+.chip .fx{font-size:19px;line-height:1.2}
+label.lab{display:flex;justify-content:space-between;font-size:14px;margin:14px 0 6px}
+label.lab b{font-weight:700}
+input[type=range]{width:100%;accent-color:var(--red)}
+input[type=text],textarea{width:100%;font:inherit;font-size:16px;border:1.5px solid var(--line);border-radius:10px;padding:10px;background:#fff;color:var(--ink)}
+textarea{min-height:150px;line-height:1.6}
+.stagewrap{background:#2C2C2A;border-radius:14px;overflow:hidden;display:grid;place-items:center;min-height:160px;position:relative}
+#stage{display:block;max-width:100%;max-height:62vh}
+.empty{color:#b4b2a9;font-size:14px;padding:40px 10px;text-align:center}
+.switch{display:flex;justify-content:space-between;align-items:center;font-size:14px;padding:10px 0;border-top:1px solid var(--line)}
+.switch:first-of-type{border-top:0}
+.switch input{width:22px;height:22px;accent-color:var(--red)}
+.caplist{display:flex;flex-direction:column;gap:8px;max-height:360px;overflow:auto;-webkit-overflow-scrolling:touch}
+.cap{display:flex;gap:6px;align-items:center}
+.cap .t{font-size:12px;color:var(--sub);width:44px;flex:none;font-variant-numeric:tabular-nums;cursor:pointer}
+.cap input{padding:8px 10px;font-size:15px}
+.cap button{flex:none;border:1px solid var(--line);background:#fff;border-radius:8px;width:36px;height:38px;font-size:16px;cursor:pointer}
+.cap button.aud{width:auto;min-width:58px;padding:0 6px;font-size:12px;white-space:nowrap;border-radius:999px}
+.cap button.aud-solo{background:#E6F1FB;border-color:#B5D4F4;color:#0C447C}
+.cap button.aud-group{background:#E1F5EE;border-color:#9FE1CB;color:#085041}
+.cap button.aud-any{background:#F1EFE8;border-color:#D3D1C7;color:#5F5E5A}
+.cap button.aud.manual{border-width:2px;border-color:currentColor}
+.cap.sel input{border-color:var(--red)}
+.clips{display:flex;flex-direction:column;gap:6px;margin-top:4px}
+.clip{display:flex;align-items:center;gap:6px;border:1px solid var(--line);border-radius:10px;padding:6px 6px 6px 10px;font-size:14px}
+.chips.four{grid-template-columns:repeat(4,1fr)}
+.chips.four .chip{padding:9px 2px;font-size:14px}
+.clip select{font:inherit;font-size:13px;border:1px solid var(--line);border-radius:8px;height:32px;padding:0 4px;background:#fff;color:var(--ink);max-width:72px}
+.cap .t em{display:block;font-style:normal;font-size:10px;color:var(--red)}
+.clip .no{font-weight:700;width:18px}
+.clip .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.clip .du{color:var(--sub);font-size:12px;font-variant-numeric:tabular-nums}
+.clip button{border:1px solid var(--line);background:#fff;border-radius:8px;width:32px;height:32px;font-size:14px;color:var(--ink)}
+.clip button:disabled{opacity:.3}
+.prog{height:10px;border-radius:5px;background:var(--line);overflow:hidden;margin:12px 0 6px}
+.prog i{display:block;height:100%;width:0;background:var(--red);transition:width .2s}
+#result video{width:100%;border-radius:12px;background:#000;max-height:70vh}
+.hidden{display:none!important}
+#src{position:fixed;left:0;top:0;width:2px;height:2px;opacity:.01;pointer-events:none}
+.toast{position:fixed;left:50%;bottom:calc(20px + env(safe-area-inset-bottom));transform:translateX(-50%);background:var(--ink);color:#fff;padding:10px 16px;border-radius:999px;font-size:14px;opacity:0;transition:opacity .2s;pointer-events:none;z-index:9}
+.toast.show{opacity:1}
+</style>
+</head>
+<body>
+<main>
+  <header><div class="belt"></div><h1>태권 <span>자막</span></h1><small id="ver" style="margin-left:auto;color:var(--sub);font-size:12px"></small></header>
+
+  <p class="hint hidden" id="fileWarn" style="background:#FCEBEB;color:#791F1F;border-radius:12px;padding:12px 14px;margin:0 0 14px">파일을 직접 열어서(file://) 보고 있어요. 이 방식은 브라우저 보안 때문에 <b>혼자/단체 감지</b>와 <b>활동 장면 고르기</b>가 동작하지 않아요. 깃허브에 올린 주소(https://…github.io/…)로 열어서 써주세요.</p>
+  <section class="card">
+    <h2><span class="n">1</span>영상 고르기</h2>
+    <input id="file" type="file" accept="video/*" multiple class="hidden">
+    <button class="btn" id="pick">동영상 선택 (여러 개 가능)</button>
+    <label class="lab" style="margin-top:4px"><span>반</span></label>
+    <div class="chips" id="groups">
+      <button class="chip" data-v="">없음</button>
+      <button class="chip" data-v="유치부">유치부</button>
+      <button class="chip" data-v="초등부">초등부</button>
+    </div>
+    <label class="lab"><span>오늘 수업 (전체 적용)</span></label>
+    <div class="chips four" id="allCls">
+      <button class="chip" data-v="general">일반</button>
+      <button class="chip" data-v="rope">줄넘기</button>
+      <button class="chip" data-v="poomsae">품새</button>
+      <button class="chip" data-v="kick">발차기</button>
+    </div>
+    <p class="hint" style="margin-bottom:8px">영상마다 다르면 아래 목록에서 하나씩 바꿀 수 있어요. 그 영상 장면에는 그 수업 자막이 자동으로 들어가요.</p>
+    <div class="clips" id="clips"></div>
+    <button class="btn ghost hidden" id="add" style="margin-top:10px">+ 영상 더 추가</button>
+    <p class="hint" id="info">앨범에서 수업 영상을 골라주세요. 여러 개 한 번에 골라도 돼요.</p>
+  </section>
+
+  <section class="card">
+    <h2><span class="n">2</span>미리보기</h2>
+    <div class="stagewrap"><canvas id="stage" class="hidden"></canvas><div class="empty" id="empty">영상을 고르면 자막이 들어간 모습이 여기 보여요</div></div>
+    <p class="hint">아래에서 바꾸는 내용이 바로 반영돼요. 자막 목록의 시간을 누르면 그 장면으로 이동해요.</p>
+  </section>
+
+  <section class="card">
+    <h2><span class="n">3</span>자막 스타일</h2>
+    <div class="chips" id="styles">
+      <button class="chip" data-v="variety"><div class="fx" style="font-family:'Black Han Sans';color:#e0a800">예능형</div><small>큰 글씨 + 태그</small></button>
+      <button class="chip" data-v="bar"><div class="fx" style="font-family:'Do Hyeon'">자막바형</div><small>깔끔 하단 바</small></button>
+      <button class="chip" data-v="sticker"><div class="fx" style="font-family:'Jua'">스티커형</div><small>말풍선 느낌</small></button>
+    </div>
+
+    <label class="lab"><span>폰트</span></label>
+    <div class="chips" id="fonts"></div>
+    <div class="switch" style="margin-top:6px"><span>장면마다 폰트 섞기</span><input type="checkbox" id="mixFonts"></div>
+    <p class="hint" id="fontHint" style="margin-top:0"></p>
+
+    <label class="lab"><span>글자 크기</span><b id="sizeV">100%</b></label>
+    <input id="size" type="range" min="50" max="180" step="5" value="100">
+
+    <label class="lab"><span>위치 (위 ↔ 아래)</span><b id="posV"></b></label>
+    <input id="pos" type="range" min="6" max="94" step="1" value="84">
+    <div class="row" style="justify-content:flex-end;margin-top:6px"><button class="btn ghost sm" id="posReset">기본 위치로</button></div>
+
+    <div style="margin-top:10px">
+      <div class="switch"><span>상단 태그 표시</span><input type="checkbox" id="showTag"></div>
+      <div id="tagRow">
+        <div class="switch" style="border-top:0;padding-top:0"><span style="color:var(--sub)">반·수업에 맞춰 자동 (예: 유치부 줄넘기 수업)</span><input type="checkbox" id="tagAuto"></div>
+        <input type="text" id="tag" maxlength="20" placeholder="오늘의 수업">
+      </div>
+      <div class="switch"><span>수업 시작 장면에 제목 자막 넣기<br><small style="color:var(--sub)">상단 태그 자동이 켜져 있으면 겹쳐서 안 넣어요</small></span><input type="checkbox" id="titleCaps"></div>
+      <div class="switch"><span>날짜 뱃지 표시</span><input type="checkbox" id="showDate"></div>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2><span class="n">♪</span>배경음악</h2>
+    <input id="musicFile" type="file" accept="audio/*" class="hidden">
+    <div class="chips" id="musics">
+      <button class="chip" data-v="none">없음<small>원본 소리만</small></button>
+      <button class="chip" data-v="beat">신나는 비트<small>앱에서 자동 생성</small></button>
+      <button class="chip" data-v="file">내 음악<small>파일에서 고르기</small></button>
+    </div>
+    <p class="hint" id="musicFileName"></p>
+    <div id="musicVolRow">
+      <label class="lab"><span>음악 볼륨</span><b id="musicVolV"></b></label>
+      <input id="musicVol" type="range" min="0" max="100" step="5">
+    </div>
+    <label class="lab"><span>원본 소리 볼륨</span><b id="origVolV"></b></label>
+    <input id="origVol" type="range" min="0" max="100" step="5">
+    <p class="hint">내 음악은 아이폰 "파일" 앱에 있는 mp3·m4a를 고를 수 있어요. 영상이 끝날 때 음악이 자연스럽게 줄어들어요.</p>
+  </section>
+
+  <section class="card">
+    <h2><span class="n">4</span>편집 길이</h2>
+    <label class="lab"><span>완성 영상 길이</span><b id="targetV"></b></label>
+    <input id="target" type="range" min="30" max="180" step="10" value="120">
+    <label class="lab"><span>장면 전환 속도</span></label>
+    <div class="chips" id="segs">
+      <button class="chip" data-v="4">빠르게<small>4초마다</small></button>
+      <button class="chip" data-v="6">보통<small>6초마다</small></button>
+      <button class="chip" data-v="8">느긋하게<small>8초마다</small></button>
+    </div>
+    <div class="switch" style="margin-top:10px"><span>활동 많은 장면 위주로 고르기</span><input type="checkbox" id="smart"></div>
+    <div class="switch"><span>혼자/단체 장면 자동 감지</span><input type="checkbox" id="people"></div>
+    <p class="hint" id="planInfo">여러 영상에서 움직임이 많은 장면 위주로 골라 이어붙여요.</p>
+  </section>
+
+  <section class="card">
+    <h2><span class="n">5</span>들어갈 자막</h2>
+    <div class="row" style="justify-content:space-between;margin-bottom:10px">
+      <span class="hint" style="margin:0">칸을 눌러 직접 고치거나 🎲로 다시 뽑기</span>
+      <button class="btn ghost sm" id="reroll">전체 다시 섞기</button>
+    </div>
+    <p class="hint hidden" id="clsNudge" style="background:#FFF4D6;border-radius:10px;padding:10px 12px;margin:0 0 10px;color:#7a5b00">지금은 모든 영상이 "일반"이라 공통 응원 자막만 들어가요. 1번에서 줄넘기·품새·발차기를 고르면 그 수업에 맞는 자막으로 바뀌어요.</p>
+    <p class="hint hidden" id="audHelp" style="margin:0 0 10px">가운데 버튼은 장면을 보고 자동으로 판단한 결과예요. <b>👤 혼자</b>면 개인·이름 자막, <b>👥 단체</b>면 다같이 자막, <b>공통</b>이면 어디든 맞는 자막이 들어가요. 틀렸으면 눌러서 혼자 → 단체 → 공통으로 바꾸세요. 직접 바꾼 건 테두리가 진하게 표시돼요.</p>
+    <div class="caplist" id="caplist"><p class="hint">영상을 고르면 자막 순서가 만들어져요.</p></div>
+  </section>
+
+  <section class="card">
+    <h2><span class="n">6</span>문구 목록</h2>
+    <label class="lab" style="margin-top:0"><span>아이 이름 (여러 명은 쉼표로)</span></label>
+    <p class="hint" style="margin:0 0 6px">한 아이가 나오는 장면엔 "줄넘기하는 정원이"처럼 이름이 들어가요. 여러 명을 쓰면 이름은 랜덤이라, 틀린 건 5번에서 고쳐주세요.</p>
+    <input type="text" id="names" placeholder="정원, 지우, 민준" style="margin-bottom:10px">
+    <label class="lab"><span>고칠 문구 목록</span></label>
+    <div class="chips four" id="sets" style="margin-bottom:8px">
+      <button class="chip" data-v="general">공통</button>
+      <button class="chip" data-v="rope">줄넘기</button>
+      <button class="chip" data-v="poomsae">품새</button>
+      <button class="chip" data-v="kick">발차기</button>
+    </div>
+    <textarea id="phrases" spellcheck="false"></textarea>
+    <p class="hint">줄 앞에 <b>[혼자]</b>를 붙이면 한 아이가 크게 나오는 장면에만, <b>[단체]</b>를 붙이면 여럿이 나오는 장면에만 들어가요. 아무것도 안 붙이면 어디든 들어가요.</p>
+    <p class="hint">한 줄에 하나씩. 줄넘기·품새·발차기로 고른 영상엔 그 수업 문구만, 일반 영상엔 공통 문구가 들어가요. <b>{이름}</b>을 넣으면 위 이름으로 바뀌어요 (예: 멋진 {이름}! → 멋진 정원이!). 이름이 비어 있으면 그 문구는 빼고 써요.</p>
+    <div class="row" style="justify-content:flex-end;margin-top:8px"><button class="btn ghost sm" id="phrasesReset">기본 문구로 되돌리기</button></div>
+  </section>
+
+  <section class="card" id="makeCard">
+    <button class="btn red" id="make" disabled>영상 만들기</button>
+    <div id="progWrap" class="hidden">
+      <div class="prog"><i id="progBar"></i></div>
+      <p class="hint" id="progText"></p>
+      <p class="hint">만드는 동안 화면을 켜두고 앱을 닫지 마세요. 완성 영상 길이만큼 시간이 걸려요.</p>
+      <button class="btn ghost sm" id="cancel" style="margin-top:8px">취소</button>
+    </div>
+  </section>
+
+  <section class="card hidden" id="result">
+    <h2><span class="n">✓</span>완성!</h2>
+    <video id="out" controls playsinline></video>
+    <button class="btn red" id="save" style="margin-top:12px">저장하기 / 공유</button>
+    <p class="hint">저장하기 → "동영상 저장"을 누르면 사진 앨범에 들어가요.</p>
+  </section>
+</main>
+
+<video id="src" playsinline preload="auto"></video>
+<div class="toast" id="toast"></div>
+<script src="app.js?v=16"></script>
+</body>
+</html>
