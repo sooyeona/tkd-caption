@@ -1,5 +1,5 @@
 'use strict';
-const APP_VERSION = '24';
+const APP_VERSION = '25';
 const $ = s => document.querySelector(s);
 
 // [혼자] = only when one child is the focus, [단체] = only when several kids are on screen.
@@ -184,7 +184,7 @@ function save() { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e
 // ---------- elements ----------
 const video = $('#src');
 const canvas = $('#stage');
-const ctx = canvas.getContext('2d');
+const ctx = canvas.getContext('2d', { alpha: false });
 let outBlob = null, outURL = null;
 let sources = [], curSrc = -1, OUT = { W: 720, H: 1280 };
 let plan = [], total = 0, captions = [], selCap = -1;
@@ -584,7 +584,7 @@ function ensureFont(waitMs = 4000) {
 }
 // after captions change, fetch any new characters and redraw the preview once they arrive
 let fontPending = null;
-function warmFonts() { clearTimeout(fontPending); fontPending = setTimeout(() => ensureFont().then(preview), 150); }
+function warmFonts() { clearTimeout(fontPending); fontPending = setTimeout(() => ensureFont().then(() => { spriteCache.clear(); preview(); }), 150); }
 function rr(c, x, y, w, h, r) {
   r = Math.min(r, h / 2, w / 2);
   c.beginPath(); c.moveTo(x + r, y); c.arcTo(x + w, y, x + w, y + h, r); c.arcTo(x + w, y + h, x, y + h, r);
@@ -609,6 +609,66 @@ function wrap(c, text, maxW) {
 const easeBack = x => { const c1 = 1.70158, c3 = c1 + 1; return 1 + c3 * Math.pow(x - 1, 3) + c1 * Math.pow(x - 1, 2); };
 const todayLabel = () => { const d = new Date(); return `${d.getMonth() + 1}.${d.getDate()} 수업`; };
 
+// Text with outlines is the most expensive thing we draw, so each caption / tag is rendered once
+// into a small offscreen "sprite" and then only stamped (with fade / pop / tilt) on every frame.
+const spriteCache = new Map();
+function sprite(key, w, h, paint) {
+  let sp = spriteCache.get(key);
+  if (!sp) {
+    if (spriteCache.size > 80) spriteCache.clear();
+    const cv = document.createElement('canvas'); cv.width = Math.max(1, Math.ceil(w)); cv.height = Math.max(1, Math.ceil(h));
+    const g = cv.getContext('2d'); paint(g, cv.width, cv.height);
+    sp = cv; spriteCache.set(key, sp);
+  }
+  return sp;
+}
+const mctx = document.createElement('canvas').getContext('2d');
+function pillSprite(text, fs, bg, round) {
+  const key = `pill|${text}|${fs.toFixed(1)}|${bg}|${round}`;
+  mctx.font = `700 ${fs}px "Noto Sans KR"`;
+  const px = fs * (round ? 0.7 : 0.6), h = fs * (round ? 1.8 : 1.7), w = mctx.measureText(text).width + px * 2;
+  return sprite(key, w, h, (g, W, H) => {
+    g.fillStyle = bg; rr(g, 0, 0, W, H, round ? H / 2 : fs * 0.35); g.fill();
+    g.font = `700 ${fs}px "Noto Sans KR"`; g.fillStyle = '#fff'; g.textBaseline = 'middle'; g.fillText(text, px, H / 2 + fs * 0.04);
+  });
+}
+function captionSprite(cap, st, col, f, U, W, k) {
+  const key = `cap|${cap}|${st}|${col}|${f.id}|${U}|${W}|${k.toFixed(3)}`;
+  if (spriteCache.has(key)) return spriteCache.get(key);
+  if (st === 'variety') {
+    const fs = U * 0.095 * k; mctx.font = `${f.w} ${fs}px "${f.id}"`;
+    const lines = wrap(mctx, cap, W * 0.88), lh = fs * 1.18, lw = fs * 0.24;
+    const tw = Math.max(...lines.map(l => mctx.measureText(l).width));
+    const w = tw + lw * 2 + 8, h = lines.length * lh + lw * 2 + fs * 0.3;
+    return sprite(key, w, h, (g, Wd, Hd) => {
+      g.font = `${f.w} ${fs}px "${f.id}"`; g.textAlign = 'center'; g.textBaseline = 'middle'; g.lineJoin = 'round';
+      const y0 = Hd / 2 - (lines.length - 1) * lh / 2;
+      lines.forEach((l, i) => { g.lineWidth = lw; g.strokeStyle = '#1f1f1f'; g.strokeText(l, Wd / 2, y0 + i * lh); g.fillStyle = col; g.fillText(l, Wd / 2, y0 + i * lh); });
+    });
+  }
+  if (st === 'bar') {
+    const fs = U * 0.062 * k; mctx.font = `${f.w} ${fs}px "${f.id}"`;
+    const lines = wrap(mctx, cap, W * 0.82), lh = fs * 1.3;
+    const tw = Math.max(...lines.map(l => mctx.measureText(l).width));
+    const pad = fs * 0.7, bh = lines.length * lh + pad * 0.9, bw = tw + pad * 2;
+    return sprite(key, bw, bh, (g, Wd, Hd) => {
+      g.fillStyle = col; rr(g, 0, 0, Wd, Hd, fs * 0.3); g.fill();
+      g.font = `${f.w} ${fs}px "${f.id}"`; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillStyle = '#fff';
+      lines.forEach((l, i) => g.fillText(l, Wd / 2, Hd / 2 - (lines.length - 1) * lh / 2 + i * lh + fs * 0.04));
+    });
+  }
+  const fs = U * 0.066 * k; mctx.font = `${f.w} ${fs}px "${f.id}"`;
+  const lines = wrap(mctx, cap, W * 0.72), lh = fs * 1.25;
+  const tw = Math.max(...lines.map(l => mctx.measureText(l).width));
+  const px = fs * 0.85, py = fs * 0.5, bw = tw + px * 2, bh = lines.length * lh + py * 2, lw = Math.max(2, U * 0.008);
+  return sprite(key, bw + lw * 2, bh + lw * 2, (g, Wd, Hd) => {
+    g.fillStyle = col; rr(g, lw, lw, bw, bh, lines.length > 1 ? fs * 0.6 : bh / 2); g.fill();
+    g.lineWidth = lw; g.strokeStyle = '#1f1f1f'; g.stroke();
+    g.font = `${f.w} ${fs}px "${f.id}"`; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillStyle = '#1f1f1f';
+    lines.forEach((l, i) => g.fillText(l, Wd / 2, Hd / 2 - (lines.length - 1) * lh / 2 + i * lh + fs * 0.04));
+  });
+}
+
 function drawOverlay(c, W, H, tOut, opts = {}) {
   const U = Math.min(W, H);
   const cur = opts.cap !== undefined ? opts.cap : capAt(tOut);
@@ -617,20 +677,9 @@ function drawOverlay(c, W, H, tOut, opts = {}) {
   const show = cur ? cur.end - cur.t : 0;
   const cap = (cur && cur.text) || '';
 
-  // top tag
   const tag = S.showTag ? tagText(tOut) : '';
-  if (tag) {
-    const fs = U * 0.042; c.save(); c.font = `700 ${fs}px "Noto Sans KR"`;
-    const tw = c.measureText(tag).width, px = fs * 0.6, x = U * 0.04, y = U * 0.04, h = fs * 1.7;
-    c.fillStyle = '#D7263D'; rr(c, x, y, tw + px * 2, h, fs * 0.35); c.fill();
-    c.fillStyle = '#fff'; c.textBaseline = 'middle'; c.fillText(tag, x + px, y + h / 2 + fs * 0.04); c.restore();
-  }
-  if (S.showDate) {
-    const fs = U * 0.036, txt = todayLabel(); c.save(); c.font = `700 ${fs}px "Noto Sans KR"`;
-    const tw = c.measureText(txt).width, px = fs * 0.7, h = fs * 1.8, x = W - U * 0.04 - tw - px * 2, y = U * 0.04;
-    c.fillStyle = '#1D9E75'; rr(c, x, y, tw + px * 2, h, h / 2); c.fill();
-    c.fillStyle = '#fff'; c.textBaseline = 'middle'; c.fillText(txt, x + px, y + h / 2 + fs * 0.04); c.restore();
-  }
+  if (tag) c.drawImage(pillSprite(tag, U * 0.042, '#D7263D', false), U * 0.04, U * 0.04);
+  if (S.showDate) { const sp = pillSprite(todayLabel(), U * 0.036, '#1D9E75', true); c.drawImage(sp, W - U * 0.04 - sp.width, U * 0.04); }
   if (!cap.trim() || local > show) return;
 
   const look = (cur && cur.look) || { style: S.style, color: 0, dy: 0, dx: 0, rot: -0.09 };
@@ -639,43 +688,21 @@ function drawOverlay(c, W, H, tOut, opts = {}) {
   const cy = H * Math.min(94, Math.max(6, S.pos[st] + look.dy)) / 100;
   const cx = W / 2 + W * look.dx;
   const fadeOut = Math.min(1, (show - local) / 0.2);
-  c.save(); c.textAlign = 'center'; c.textBaseline = 'middle'; c.lineJoin = 'round';
-
+  const sp = captionSprite(cap, st, col, f, U, W, k);
+  c.save();
   if (st === 'variety') {
-    const fs = U * 0.095 * k; c.font = `${f.w} ${fs}px "${f.id}"`;
-    const lines = wrap(c, cap, W * 0.88), lh = fs * 1.18;
     const pop = local < 0.28 ? 1 + 0.4 * (1 - local / 0.28) : 1;
     c.globalAlpha = fadeOut; c.translate(cx, cy); c.scale(pop, pop);
-    const y0 = -(lines.length - 1) * lh / 2;
-    lines.forEach((l, i) => {
-      const y = y0 + i * lh;
-      c.lineWidth = fs * 0.24; c.strokeStyle = '#1f1f1f'; c.strokeText(l, 0, y);
-      c.fillStyle = col; c.fillText(l, 0, y);
-    });
   } else if (st === 'bar') {
-    const fs = U * 0.062 * k; c.font = `${f.w} ${fs}px "${f.id}"`;
-    const lines = wrap(c, cap, W * 0.82), lh = fs * 1.3;
-    const tw = Math.max(...lines.map(l => c.measureText(l).width));
-    const pad = fs * 0.7, bh = lines.length * lh + pad * 0.9, bw = tw + pad * 2;
+    const fs = U * 0.062 * k;
     const a = Math.min(1, local / 0.2) * fadeOut, slide = (1 - Math.min(1, local / 0.2)) * fs * 0.5;
     c.globalAlpha = a; c.translate(cx, cy + slide);
-    c.fillStyle = col; rr(c, -bw / 2, -bh / 2, bw, bh, fs * 0.3); c.fill();
-    c.fillStyle = '#fff';
-    lines.forEach((l, i) => c.fillText(l, 0, -(lines.length - 1) * lh / 2 + i * lh + fs * 0.04));
   } else {
-    const fs = U * 0.066 * k; c.font = `${f.w} ${fs}px "${f.id}"`;
-    const lines = wrap(c, cap, W * 0.72), lh = fs * 1.25;
-    const tw = Math.max(...lines.map(l => c.measureText(l).width));
-    const px = fs * 0.85, py = fs * 0.5, bw = tw + px * 2, bh = lines.length * lh + py * 2;
     const sc = local < 0.4 ? Math.max(0.01, easeBack(local / 0.4)) : 1;
-    // keep the tilted sticker fully on screen
-    const half = bw / 2 + fs * 0.3, sx = Math.min(W - half, Math.max(half, cx));
+    const half = sp.width / 2 + U * 0.02, sx = Math.min(W - half, Math.max(half, cx));   // keep the tilted sticker on screen
     c.globalAlpha = fadeOut; c.translate(sx, cy); c.rotate(look.rot); c.scale(sc, sc);
-    c.fillStyle = col; rr(c, -bw / 2, -bh / 2, bw, bh, lines.length > 1 ? fs * 0.6 : bh / 2); c.fill();
-    c.lineWidth = Math.max(2, U * 0.008); c.strokeStyle = '#1f1f1f'; c.stroke();
-    c.fillStyle = '#1f1f1f';
-    lines.forEach((l, i) => c.fillText(l, 0, -(lines.length - 1) * lh / 2 + i * lh + fs * 0.04));
   }
+  c.drawImage(sp, -sp.width / 2, -sp.height / 2);
   c.restore();
 }
 
@@ -890,6 +917,12 @@ async function analyzeAll() {
 
 // ---------- solo / group detection (on-device person detector, bundled with the app) ----------
 let detector = null, detectorFailed = false;
+// the person detector holds a lot of GPU memory; once every clip is analysed we don't need it while recording
+function releaseDetector() {
+  try { if (detector && detector.model && detector.model.dispose) detector.model.dispose(); } catch (e) {}
+  try { if (window.tf) { tf.disposeVariables(); tf.engine().reset(); } } catch (e) {}
+  detector = null;
+}
 function addScript(src) {
   return new Promise((res, rej) => { const el = document.createElement('script'); el.src = src; el.onload = res; el.onerror = rej; document.head.appendChild(el); });
 }
@@ -1012,33 +1045,37 @@ function syncMusic() {
 }
 
 // original upbeat loop, synthesized live (no copyright issues)
-function startBeat(t0, dur) {
-  const bpm = 124, b = 60 / bpm, bar = b * 4;
+// The original 4-bar loop is rendered ONCE offline into an audio buffer, then simply looped.
+// (Scheduling hundreds of synth notes live caused small hitches in the video on phones.)
+let beatBuf = null;
+async function renderBeat(rate) {
+  if (beatBuf) return beatBuf;
+  const bpm = 124, b = 60 / bpm, bar = b * 4, len = bar * 4;
+  const OAC = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+  const oc = new OAC(2, Math.ceil(len * rate), rate);
   const chords = [[57, 60, 64], [53, 57, 60], [48, 52, 55], [55, 59, 62]]; // Am F C G
   const hz = m => 440 * Math.pow(2, (m - 69) / 12);
-  const out = actx.createGain(); out.gain.value = 0.5; out.connect(musicGain); musicNodes.push(out);
-  const noise = actx.createBuffer(1, actx.sampleRate * 0.3, actx.sampleRate);
+  const out = oc.createGain(); out.gain.value = 0.5; out.connect(oc.destination);
+  const noise = oc.createBuffer(1, Math.ceil(rate * 0.3), rate);
   const nd = noise.getChannelData(0); for (let i = 0; i < nd.length; i++) nd[i] = Math.random() * 2 - 1;
   const env = (node, t, a, peak, d) => { node.gain.setValueAtTime(0.0001, t); node.gain.exponentialRampToValueAtTime(peak, t + a); node.gain.exponentialRampToValueAtTime(0.0001, t + a + d); };
-  const kick = t => { const o = actx.createOscillator(), g = actx.createGain(); o.frequency.setValueAtTime(140, t); o.frequency.exponentialRampToValueAtTime(45, t + 0.12); env(g, t, 0.003, 0.9, 0.25); o.connect(g).connect(out); o.start(t); o.stop(t + 0.3); };
-  const hat = (t, v) => { const s = actx.createBufferSource(), f = actx.createBiquadFilter(), g = actx.createGain(); s.buffer = noise; f.type = 'highpass'; f.frequency.value = 7000; env(g, t, 0.002, v, 0.04); s.connect(f).connect(g).connect(out); s.start(t); s.stop(t + 0.08); };
-  const clap = t => { const s = actx.createBufferSource(), f = actx.createBiquadFilter(), g = actx.createGain(); s.buffer = noise; f.type = 'bandpass'; f.frequency.value = 1500; env(g, t, 0.003, 0.5, 0.14); s.connect(f).connect(g).connect(out); s.start(t); s.stop(t + 0.2); };
-  const tone = (t, m, d, v, type) => { const o = actx.createOscillator(), g = actx.createGain(), f = actx.createBiquadFilter(); o.type = type; o.frequency.value = hz(m); f.type = 'lowpass'; f.frequency.value = 2200; env(g, t, 0.01, v, d); o.connect(f).connect(g).connect(out); o.start(t); o.stop(t + d + 0.05); };
-  const bars = Math.ceil(dur / bar) + 1;
-  // schedule in chunks to keep node count low
-  let k = 0;
-  const sched = () => {
-    const until = actx.currentTime + 6;
-    for (; k < bars && t0 + k * bar < until; k++) {
-      const t = t0 + k * bar, ch = chords[k % 4];
-      for (let q = 0; q < 4; q++) { kick(t + q * b); hat(t + q * b + b / 2, 0.25); hat(t + q * b + b / 4, 0.08); }
-      clap(t + b); clap(t + 3 * b);
-      for (let q = 0; q < 8; q++) tone(t + q * b / 2, ch[0] - 24 + (q % 2 ? 12 : 0), b / 2 * 0.8, 0.28, 'triangle');
-      [0, 1.5, 2.5, 3].forEach(p => ch.forEach(m => tone(t + p * b, m + 12, b * 0.4, 0.07, 'square')));
-    }
-    if (k < bars) beatTimer = setTimeout(sched, 2000);
-  };
-  sched();
+  const kick = t => { const o = oc.createOscillator(), g = oc.createGain(); o.frequency.setValueAtTime(140, t); o.frequency.exponentialRampToValueAtTime(45, t + 0.12); env(g, t, 0.003, 0.9, 0.25); o.connect(g).connect(out); o.start(t); o.stop(t + 0.3); };
+  const hat = (t, v) => { const s = oc.createBufferSource(), f = oc.createBiquadFilter(), g = oc.createGain(); s.buffer = noise; f.type = 'highpass'; f.frequency.value = 7000; env(g, t, 0.002, v, 0.04); s.connect(f).connect(g).connect(out); s.start(t); s.stop(t + 0.08); };
+  const clap = t => { const s = oc.createBufferSource(), f = oc.createBiquadFilter(), g = oc.createGain(); s.buffer = noise; f.type = 'bandpass'; f.frequency.value = 1500; env(g, t, 0.003, 0.5, 0.14); s.connect(f).connect(g).connect(out); s.start(t); s.stop(t + 0.2); };
+  const tone = (t, m, d, v, type) => { const o = oc.createOscillator(), g = oc.createGain(), f = oc.createBiquadFilter(); o.type = type; o.frequency.value = hz(m); f.type = 'lowpass'; f.frequency.value = 2200; env(g, t, 0.01, v, d); o.connect(f).connect(g).connect(out); o.start(t); o.stop(Math.min(len, t + d + 0.05)); };
+  for (let k = 0; k < 4; k++) {
+    const t = k * bar, ch = chords[k];
+    for (let q = 0; q < 4; q++) { kick(t + q * b); hat(t + q * b + b / 2, 0.25); hat(t + q * b + b / 4, 0.08); }
+    clap(t + b); clap(t + 3 * b);
+    for (let q = 0; q < 8; q++) tone(t + q * b / 2, ch[0] - 24 + (q % 2 ? 12 : 0), b / 2 * 0.8, 0.28, 'triangle');
+    [0, 1.5, 2.5, 3].forEach(p => ch.forEach(m => tone(t + p * b, m + 12, b * 0.4, 0.07, 'square')));
+  }
+  beatBuf = await new Promise((res, rej) => { const p = oc.startRendering(); if (p && p.then) p.then(res, rej); else oc.oncomplete = e => res(e.renderedBuffer); });
+  return beatBuf;
+}
+function startBeat(t0) {
+  if (!beatBuf) return;
+  const s = actx.createBufferSource(); s.buffer = beatBuf; s.loop = true; s.connect(musicGain); s.start(t0); musicNodes.push(s);
 }
 let beatTimer = null;
 function startMusic(dur) {
@@ -1052,7 +1089,7 @@ function startMusic(dur) {
   musicGain.gain.linearRampToValueAtTime(0.0001, t0 + dur);
   if (S.music === 'file' && musicBuf) {
     const s = actx.createBufferSource(); s.buffer = musicBuf; s.loop = true; s.connect(musicGain); s.start(t0); musicNodes.push(s);
-  } else startBeat(t0, dur);
+  } else startBeat(t0);
 }
 function stopMusic() {
   clearTimeout(beatTimer);
@@ -1092,6 +1129,9 @@ $('#make').onclick = async () => {
 
   try {
     await unlock; await ensureFont(10000);
+    spriteCache.clear();
+    releaseDetector();
+    if (actx && S.music === 'beat') { try { await renderBeat(actx.sampleRate); } catch (e) { console.error(e); } }
     const { W, H } = OUT;
     canvas.width = W; canvas.height = H;
     const stream = canvas.captureStream(30);
@@ -1182,7 +1222,10 @@ function fadeOrig(to, sec) {
 function playSegment(seg, offset, W, H, rec, hasPrev, hasNext) {
   return new Promise((resolve, reject) => {
     let finished = false, started = false, lastT = -1, stall = 0;
-    const end = () => { if (finished) return; finished = true; video.pause(); resolve(); };
+    // when a scene runs to the very end of a clip no more frames arrive, so stop on 'ended' right away
+    // (otherwise the recorder keeps capturing the last frame until the watchdog notices)
+    const end = () => { if (finished) return; finished = true; video.removeEventListener('ended', end); if (rec && rec.state === 'recording') try { rec.pause(); } catch (e) {} video.pause(); resolve(); };
+    video.addEventListener('ended', end);
     let fadingOut = false;
     const draw = () => {
       const t = video.currentTime;
@@ -1200,7 +1243,7 @@ function playSegment(seg, offset, W, H, rec, hasPrev, hasNext) {
       if (cancelled) return end();
       const t = draw();
       if (!started) { started = true; releaseRecording(rec); }
-      if (t >= seg.end - 0.02 || video.ended) return end();
+      if (t >= seg.end - 0.04 || video.ended || (video.duration && t >= video.duration - 0.04)) return end();
       if (t === lastT) { if (++stall > 300) return end(); } else { stall = 0; lastT = t; }
       next();
     };
@@ -1212,8 +1255,8 @@ function playSegment(seg, offset, W, H, rec, hasPrev, hasNext) {
       const t = video.currentTime;
       if (!started && t > seg.start + 0.05) { started = true; releaseRecording(rec); }
       if (video.ended || t >= seg.end - 0.02) { draw(); clearInterval(guard); return end(); }
-      if (t === lastSeen) { if (++still >= 10) { clearInterval(guard); return end(); } } else { still = 0; lastSeen = t; }
-    }, 500);
+      if (t === lastSeen) { if (++still >= 25) { clearInterval(guard); return end(); } } else { still = 0; lastSeen = t; }
+    }, 200);
     const resumeAudio = (actx && actx.state !== 'running' ? actx.resume().catch(() => {}) : Promise.resolve())
       .then(() => { if (origGain) { if (hasPrev && S.trans !== 'none') { origGain.gain.cancelScheduledValues(actx.currentTime); origGain.gain.setValueAtTime(0, actx.currentTime); fadeOrig(S.origVol / 100, 0.25); } else fadeOrig(S.origVol / 100, 0.01); } });
     resumeAudio.then(() => video.play())
