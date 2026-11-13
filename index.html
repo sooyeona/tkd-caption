@@ -10,9 +10,9 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="태권 자막">
 <link rel="manifest" href="manifest.webmanifest">
-<link rel="apple-touch-icon" href="icon-180.png?v=23">
+<link rel="apple-touch-icon" href="icon-180.png?v=24">
 <link rel="icon" href="icon-180.png">
-<link rel="stylesheet" href="fonts.css?v=23">
+<link rel="stylesheet" href="fonts.css?v=24">
 <style>
 :root{--bg:#F6F4EF;--card:#fff;--ink:#1f1f1f;--sub:#6b6a66;--line:#e4e1d9;--red:#D7263D;--yellow:#FFD43B}
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
@@ -101,7 +101,7 @@ textarea{min-height:150px;line-height:1.6}
 </head>
 <body>
 <main>
-  <header><img src="icon-180.png?v=23" alt="" width="38" height="38" style="border-radius:10px;image-rendering:pixelated"><h1>태권 <span>자막</span></h1><small id="ver" style="margin-left:auto;color:var(--sub);font-size:12px"></small></header>
+  <header><img src="icon-180.png?v=24" alt="" width="38" height="38" style="border-radius:10px;image-rendering:pixelated"><h1>태권 <span>자막</span></h1><small id="ver" style="margin-left:auto;color:var(--sub);font-size:12px"></small></header>
 
   <p class="hint hidden" id="fileWarn" style="background:#FCEBEB;color:#791F1F;border-radius:12px;padding:12px 14px;margin:0 0 14px">파일을 직접 열어서(file://) 보고 있어요. 이 방식은 브라우저 보안 때문에 <b>혼자/단체 감지</b>와 <b>활동 장면 고르기</b>가 동작하지 않아요. 깃허브에 올린 주소(https://…github.io/…)로 열어서 써주세요.</p>
   <section class="card">
@@ -196,6 +196,13 @@ textarea{min-height:150px;line-height:1.6}
       <button class="chip" data-v="6">보통<small>6초마다</small></button>
       <button class="chip" data-v="8">느긋하게<small>8초마다</small></button>
     </div>
+    <label class="lab"><span>장면 전환 효과</span></label>
+    <div class="chips four" id="trans">
+      <button class="chip" data-v="cross">부드럽게<small>겹치며 전환</small></button>
+      <button class="chip" data-v="white">흰색<small>번쩍 전환</small></button>
+      <button class="chip" data-v="black">검은색<small>암전 전환</small></button>
+      <button class="chip" data-v="none">없음<small>바로 컷</small></button>
+    </div>
     <div class="switch" style="margin-top:10px"><span>활동 많은 장면 위주로 고르기</span><input type="checkbox" id="smart"></div>
     <div class="switch"><span>혼자/단체 장면 자동 감지</span><input type="checkbox" id="people"></div>
     <p class="hint" id="planInfo">여러 영상에서 움직임이 많은 장면 위주로 골라 이어붙여요.</p>
@@ -259,6 +266,6 @@ textarea{min-height:150px;line-height:1.6}
   </div>
 </div>
 <div class="toast" id="toast"></div>
-<script src="app.js?v=23"></script>
+<script src="app.js?v=24"></script>
 </body>
 </html>

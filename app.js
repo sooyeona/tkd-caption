@@ -1,5 +1,5 @@
 'use strict';
-const APP_VERSION = '23';
+const APP_VERSION = '24';
 const $ = s => document.querySelector(s);
 
 // [혼자] = only when one child is the focus, [단체] = only when several kids are on screen.
@@ -165,6 +165,7 @@ const defaults = {
   target: 120,
   seg: 6,
   smart: true,
+  trans: 'cross',
   sets: defaultSets(),
   defCls: 'general',
   editSet: 'general'
@@ -218,7 +219,8 @@ function syncUI() {
   $('#showTag').checked = S.showTag; $('#tag').value = S.tag; $('#tagRow').classList.toggle('hidden', !S.showTag);
   $('#tagAuto').checked = S.tagAuto; $('#tag').classList.toggle('hidden', S.tagAuto); $('#titleCaps').checked = S.titleCaps;
   document.querySelectorAll('#groups .chip').forEach(b => b.classList.toggle('on', b.dataset.v === S.group));
-  $('#showDate').checked = S.showDate; $('#names').value = S.names; $('#smart').checked = S.smart; $('#people').checked = S.people;
+  $('#showDate').checked = S.showDate; $('#names').value = S.names; $('#smart').checked = S.smart;
+  document.querySelectorAll('#trans .chip').forEach(b => b.classList.toggle('on', b.dataset.v === S.trans)); $('#people').checked = S.people;
   $('#target').value = S.target; $('#targetV').textContent = fmt(S.target);
   if ($('#phrases') !== document.activeElement) $('#phrases').value = S.sets[S.editSet] || '';
   document.querySelectorAll('#sets .chip').forEach(b => b.classList.toggle('on', b.dataset.v === S.editSet));
@@ -299,6 +301,7 @@ $('#people').onchange = async e => {
   if (S.people && sources.length) { await detectPeople(); $('#make').disabled = !sources.length; }
   rebuildPlan(true); refreshPreview();
 };
+$('#trans').addEventListener('click', e => { const b = e.target.closest('.chip'); if (!b) return; S.trans = b.dataset.v; save(); syncUI(); });
 $('#smart').onchange = async e => { S.smart = e.target.checked; save(); await analyzeAll(); rebuildPlan(true); refreshPreview(); };
 $('#target').addEventListener('input', e => { S.target = +e.target.value; $('#targetV').textContent = fmt(S.target); });
 $('#target').addEventListener('change', e => { S.target = +e.target.value; onChange(true); });
@@ -1108,9 +1111,11 @@ $('#make').onclick = async () => {
       const seg = plan[i];
       if (i > 0) {
         await useSrc(seg.src); await seekTo(seg.start);
-        drawVideo(ctx, W, H); drawOverlay(ctx, W, H, offset);
+        drawVideo(ctx, W, H); drawTransition(ctx, W, H, 0, Infinity, i > 0); drawOverlay(ctx, W, H, offset);
       }
-      await playSegment(seg, offset, W, H, rec);
+      await playSegment(seg, offset, W, H, rec, i > 0, i < plan.length - 1);
+      // remember how this scene ended so the next one can fade in over it
+      snapCanvas.width = W; snapCanvas.height = H; drawVideo(snapCtx, W, H);
       holdRecording(rec);
       offset += seg.end - seg.start;
     }
@@ -1152,14 +1157,40 @@ function releaseRecording(rec) {
 // draw on every new decoded video frame (requestVideoFrameCallback) instead of on screen refresh,
 // falling back to requestAnimationFrame where it isn't supported
 const hasRVFC = 'requestVideoFrameCallback' in HTMLVideoElement.prototype;
-function playSegment(seg, offset, W, H, rec) {
+// ---------- scene transitions ----------
+const XF = 0.5;                       // seconds
+const snapCanvas = document.createElement('canvas'), snapCtx = snapCanvas.getContext('2d');
+// since = seconds into this scene, left = seconds until it ends
+function drawTransition(c, W, H, since, left, hasPrev) {
+  if (S.trans === 'none') return;
+  if (S.trans === 'cross') {
+    if (hasPrev && since < XF && snapCanvas.width) { c.save(); c.globalAlpha = 1 - since / XF; c.drawImage(snapCanvas, 0, 0, W, H); c.restore(); }
+    return;
+  }
+  // dip to white / black: out over the last half, in over the first half
+  const half = XF / 2;
+  let a = 0;
+  if (hasPrev && since < half) a = 1 - since / half;
+  if (left < half) a = Math.max(a, 1 - left / half);
+  if (a > 0) { c.save(); c.globalAlpha = a; c.fillStyle = S.trans === 'white' ? '#fff' : '#000'; c.fillRect(0, 0, W, H); c.restore(); }
+}
+function fadeOrig(to, sec) {
+  if (!actx || !origGain) return;
+  const now = actx.currentTime, g = origGain.gain;
+  g.cancelScheduledValues(now); g.setValueAtTime(g.value, now); g.linearRampToValueAtTime(to, now + sec);
+}
+function playSegment(seg, offset, W, H, rec, hasPrev, hasNext) {
   return new Promise((resolve, reject) => {
     let finished = false, started = false, lastT = -1, stall = 0;
     const end = () => { if (finished) return; finished = true; video.pause(); resolve(); };
+    let fadingOut = false;
     const draw = () => {
       const t = video.currentTime;
       const tOut = offset + Math.max(0, t - seg.start);
       drawVideo(ctx, W, H);
+      const left = hasNext ? seg.end - t : Infinity;
+      drawTransition(ctx, W, H, t - seg.start, left, hasPrev);
+      if (hasNext && !fadingOut && left < 0.25 && S.trans !== 'none') { fadingOut = true; fadeOrig(0, Math.max(0.05, left)); }
       drawOverlay(ctx, W, H, tOut);
       setProg(tOut);
       return t;
@@ -1183,7 +1214,8 @@ function playSegment(seg, offset, W, H, rec) {
       if (video.ended || t >= seg.end - 0.02) { draw(); clearInterval(guard); return end(); }
       if (t === lastSeen) { if (++still >= 10) { clearInterval(guard); return end(); } } else { still = 0; lastSeen = t; }
     }, 500);
-    const resumeAudio = actx && actx.state !== 'running' ? actx.resume().catch(() => {}) : Promise.resolve();
+    const resumeAudio = (actx && actx.state !== 'running' ? actx.resume().catch(() => {}) : Promise.resolve())
+      .then(() => { if (origGain) { if (hasPrev && S.trans !== 'none') { origGain.gain.cancelScheduledValues(actx.currentTime); origGain.gain.setValueAtTime(0, actx.currentTime); fadeOrig(S.origVol / 100, 0.25); } else fadeOrig(S.origVol / 100, 0.01); } });
     resumeAudio.then(() => video.play())
       .catch(() => { video.muted = true; return video.play(); })
       .then(() => next()).catch(err => { clearInterval(guard); reject(err); });
