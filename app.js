@@ -1,5 +1,5 @@
 'use strict';
-const APP_VERSION = '28';
+const APP_VERSION = '29';
 const $ = s => document.querySelector(s);
 
 // [혼자] = only when one child is the focus, [단체] = only when several kids are on screen.
@@ -1193,6 +1193,12 @@ $('#make').onclick = async () => {
 };
 $('#cancel').onclick = () => { cancelled = true; video.pause(); };
 function showResult() {
+  const el = $('#diag');
+  if (diag && diag.t0) {
+    const sec = Math.round((performance.now() - diag.t0) / 1000);
+    el.textContent = `처리 방식: 직접 풀기 ${diag.direct}장면 · 재생 방식 ${diag.playback}장면 · 소리 ${diag.audio} · ${Math.floor(sec / 60)}분 ${sec % 60}초` + (diag.why.length ? `\n${diag.why.join('\n')}` : '');
+  } else el.textContent = '처리 방식: 실시간 녹화 (이 기기는 정밀 모드를 지원하지 않아요)';
+  diag = {};
   if (outURL) URL.revokeObjectURL(outURL);
   outURL = URL.createObjectURL(outBlob);
   $('#out').src = outURL;
@@ -1264,18 +1270,41 @@ async function buildAudio() {
   }
   return await new Promise((res, rej) => { const p = oc.startRendering(); if (p && p.then) p.then(res, rej); else oc.oncomplete = e => res(e.renderedBuffer); });
 }
+// Safari hands over the whole MPEG-4 "ES descriptor" where a bare AudioSpecificConfig is expected.
+// Dig the config (descriptor tag 0x05) out of it; return null if it doesn't look valid.
+function toASC(desc) {
+  if (!desc) return null;
+  const u = desc instanceof ArrayBuffer ? new Uint8Array(desc) : new Uint8Array(desc.buffer, desc.byteOffset, desc.byteLength);
+  const valid = a => a && a.length >= 2 && ((a[0] >> 3) === 2 || (a[0] >> 3) === 5) && (((a[0] & 7) << 1) | (a[1] >> 7)) < 12 && ((a[1] >> 3) & 15) > 0;
+  if (u[0] !== 0x03) return valid(u) ? u : null;
+  let p = 0;
+  const len = () => { let n = 0, b; do { b = u[p++]; n = (n << 7) | (b & 0x7f); } while (b & 0x80 && p < u.length); return n; };
+  while (p < u.length) {
+    const tag = u[p++], n = len();
+    if (tag === 0x03) { const flags = u[p + 2]; p += 3; if (flags & 0x80) p += 2; if (flags & 0x40) p += 1 + u[p]; if (flags & 0x20) p += 2; continue; }
+    if (tag === 0x04) { p += 13; continue; }
+    if (tag === 0x05) { const a = u.slice(p, p + n); return valid(a) ? a : null; }
+    p += n;
+  }
+  return null;
+}
+function ascFor(sr, ch) {
+  const i = [96000, 88200, 64000, 48000, 44100, 32000, 24000, 22050, 16000, 12000, 11025, 8000].indexOf(sr);
+  return new Uint8Array([(2 << 3) | (Math.max(0, i) >> 1), ((Math.max(0, i) & 1) << 7) | (ch << 3)]);
+}
 async function encodeAudio(abuf, muxer) {
-  // Safari's encoder may leave out the AAC "decoder config"; without it the file says "0 channels" and some players stay silent
-  const sfi = [96000, 88200, 64000, 48000, 44100, 32000, 24000, 22050, 16000, 12000, 11025, 8000].indexOf(abuf.sampleRate);
-  const asc = new Uint8Array([(2 << 3) | (sfi >> 1), ((sfi & 1) << 7) | (2 << 3)]);   // AAC-LC, 2 channels
   let first = true;
   const enc = new AudioEncoder({
     output: (chunk, meta) => {
       if (first) {
         first = false;
-        const dc = (meta && meta.decoderConfig) || {};
-        const good = dc.description && dc.description.byteLength >= 2 && dc.numberOfChannels;
-        if (preciseAudio.mux === 'aac' && !good) meta = { decoderConfig: { codec: 'mp4a.40.2', sampleRate: abuf.sampleRate, numberOfChannels: 2, description: asc } };
+        if (preciseAudio.mux === 'aac') {
+          const dc = (meta && meta.decoderConfig) || {};
+          const sr = dc.sampleRate || abuf.sampleRate, ch = dc.numberOfChannels || 2;
+          const real = toASC(dc.description);
+          meta = { decoderConfig: { codec: 'mp4a.40.2', sampleRate: sr, numberOfChannels: ch, description: real || ascFor(sr, ch) } };
+          diag.audio = real ? 'aac' : 'aac(기본값)';
+        } else diag.audio = 'opus';
       }
       muxer.addAudioChunk(chunk, meta);
     },
@@ -1332,13 +1361,14 @@ async function demuxSource(s, ranges) {
     buf.fileStart = pos; mp4.appendBuffer(buf);
   }
   mp4.flush();
-  if (err || !track || !samples.length) return null;
+  if (err || !track || !samples.length) { diag.why && diag.why.push(`${s.name}: 파일 구조를 못 읽음`); return null; }
   let codec = track.codec;
   // the browser already shows the clip upright; trust it if the matrix disagrees
   const W0 = track.track_width || track.video.width, H0 = track.track_height || track.video.height;
   if (((rot % 180 ? H0 > W0 : W0 > H0) !== (s.w > s.h)) && s.w !== s.h) rot = (rot + 90) % 360;
   const cfg = { codec, codedWidth: track.video.width, codedHeight: track.video.height, ...(desc ? { description: desc } : {}) };
-  try { const r = await VideoDecoder.isConfigSupported(cfg); if (!r.supported) return null; } catch (e) { return null; }
+  try { const r = await VideoDecoder.isConfigSupported(cfg); if (!r.supported) { diag.why && diag.why.push(`${s.name}: ${codec} 직접 풀기 미지원`); return null; } }
+  catch (e) { diag.why && diag.why.push(`${s.name}: ${codec} 확인 실패`); return null; }
   return { cfg, samples, rot, keepFrom, keepTo };
 }
 function drawFrame(c, frame, rot, W, H) {
@@ -1392,7 +1422,9 @@ async function decodeSegmentDirect(d, seg, offset, W, H, venc, hasPrev, hasNext,
   if (lastFrame) { snapCanvas.width = W; snapCanvas.height = H; drawFrame(snapCtx, lastFrame, d.rot, W, H); lastFrame.close(); }
 }
 
+let diag = {};
 async function renderPrecise(W, H) {
+  diag = { direct: 0, playback: 0, why: [], audio: '없음', t0: performance.now() };
   if (!window.Mp4Muxer) await addScript('lib/mp4-muxer.js');
   const vcfg = await pickVideoConfig(W, H);
   if (!vcfg) throw new Error('이 기기에서 영상 인코딩을 지원하지 않아요');
@@ -1417,7 +1449,7 @@ async function renderPrecise(W, H) {
     const used = [...new Set(plan.map(p => p.src))];
     for (let n = 0; n < used.length && !cancelled; n++) {
       $('#progText').textContent = `영상 준비 중… ${n + 1} / ${used.length}`;
-      try { direct[used[n]] = await demuxSource(sources[used[n]], needRanges(used[n])); } catch (e) { console.error(e); direct[used[n]] = null; }
+      try { direct[used[n]] = await demuxSource(sources[used[n]], needRanges(used[n])); } catch (e) { console.error(e); direct[used[n]] = null; diag.why.push(`${used[n] + 1}번: ${e && e.message || e}`); }
     }
   }
   let offset = 0, lastTs = -1, lastKey = -10, rate = 0.35;
@@ -1426,12 +1458,13 @@ async function renderPrecise(W, H) {
     const seg = plan[i], d = direct[seg.src];
     let done = false;
     if (d) {
-      try { await decodeSegmentDirect(d, seg, offset, W, H, venc, i > 0, i < plan.length - 1, getLast, setLast, getKey); done = true; }
-      catch (e) { console.error('direct decode failed, using playback', e); direct[seg.src] = null; }
+      try { await decodeSegmentDirect(d, seg, offset, W, H, venc, i > 0, i < plan.length - 1, getLast, setLast, getKey); done = true; diag.direct++; }
+      catch (e) { console.error('direct decode failed, using playback', e); direct[seg.src] = null; diag.why.push(`${seg.src + 1}번 풀기 실패: ${e && e.message || e}`); }
     }
     if (!done && !cancelled) {
       await useSrc(seg.src); await seekTo(seg.start);
       video.muted = true;
+      diag.playback++;
       const res = await encodeSegment(seg, offset, W, H, venc, i > 0, i < plan.length - 1, rate, getLast, setLast, getKey);
       rate = res.rate;
       snapCanvas.width = W; snapCanvas.height = H; drawVideo(snapCtx, W, H);
@@ -1607,9 +1640,11 @@ $('#save').onclick = async () => {
   const name = `태권도_${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}.${ext}`;
   const file = new File([outBlob], name, { type: outBlob.type });
   if (navigator.canShare && navigator.canShare({ files: [file] })) {
-    try { await navigator.share({ files: [file] }); return; } catch (e) { if (e.name === 'AbortError') return; }
+    try { await navigator.share({ files: [file] }); toast('저장 완료! 사진 앱에서 확인하세요'); return; }
+    catch (e) { if (e.name === 'AbortError') { toast('저장을 취소했어요'); return; } }
   }
   const a = document.createElement('a'); a.href = outURL; a.download = name; document.body.appendChild(a); a.click(); a.remove();
+  toast('저장 완료! 다운로드 폴더를 확인하세요');
 };
 
 // ---------- init ----------
