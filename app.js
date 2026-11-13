@@ -1,5 +1,5 @@
 'use strict';
-const APP_VERSION = '26';
+const APP_VERSION = '27';
 const $ = s => document.querySelector(s);
 
 // [혼자] = only when one child is the focus, [단체] = only when several kids are on screen.
@@ -1141,6 +1141,7 @@ $('#make').onclick = async () => {
     const { W, H } = OUT;
     canvas.width = W; canvas.height = H;
     if (precise) {
+      $('#renderNote').classList.remove('hidden');
       const blob = await renderPrecise(W, H);
       if (cancelled || !blob) { toast('취소했어요'); return; }
       outBlob = blob; showResult(); return;
@@ -1184,7 +1185,7 @@ $('#make').onclick = async () => {
     console.error(err);
     alert('만드는 중 문제가 생겼어요: ' + (err && err.message || err));
   } finally {
-    busy = false; video.pause(); video.muted = true; stopMusic();
+    busy = false; video.pause(); video.muted = true; stopMusic(); $('#renderNote').classList.add('hidden');
     try { wake && wake.release(); } catch (e) {}
     $('#make').disabled = false; $('#progWrap').classList.add('hidden');
     refreshPreview();
@@ -1264,7 +1265,22 @@ async function buildAudio() {
   return await new Promise((res, rej) => { const p = oc.startRendering(); if (p && p.then) p.then(res, rej); else oc.oncomplete = e => res(e.renderedBuffer); });
 }
 async function encodeAudio(abuf, muxer) {
-  const enc = new AudioEncoder({ output: (chunk, meta) => muxer.addAudioChunk(chunk, meta), error: e => console.error(e) });
+  // Safari's encoder may leave out the AAC "decoder config"; without it the file says "0 channels" and some players stay silent
+  const sfi = [96000, 88200, 64000, 48000, 44100, 32000, 24000, 22050, 16000, 12000, 11025, 8000].indexOf(abuf.sampleRate);
+  const asc = new Uint8Array([(2 << 3) | (sfi >> 1), ((sfi & 1) << 7) | (2 << 3)]);   // AAC-LC, 2 channels
+  let first = true;
+  const enc = new AudioEncoder({
+    output: (chunk, meta) => {
+      if (first) {
+        first = false;
+        const dc = (meta && meta.decoderConfig) || {};
+        const good = dc.description && dc.description.byteLength >= 2 && dc.numberOfChannels;
+        if (preciseAudio.mux === 'aac' && !good) meta = { decoderConfig: { codec: 'mp4a.40.2', sampleRate: abuf.sampleRate, numberOfChannels: 2, description: asc } };
+      }
+      muxer.addAudioChunk(chunk, meta);
+    },
+    error: e => console.error(e)
+  });
   enc.configure({ codec: preciseAudio.codec, sampleRate: abuf.sampleRate, numberOfChannels: 2, bitrate: 128000 });
   const L = abuf.getChannelData(0), R = abuf.numberOfChannels > 1 ? abuf.getChannelData(1) : L, N = 4096;
   for (let i = 0; i < abuf.length; i += N) {
@@ -1295,15 +1311,14 @@ async function renderPrecise(W, H) {
   const venc = new VideoEncoder({ output: (chunk, meta) => muxer.addVideoChunk(chunk, meta), error: e => { encErr = e; } });
   venc.configure(vcfg);
 
-  let offset = 0, lastTs = -1, lastKey = -10, rate = 0.6;
+  let offset = 0, lastTs = -1, lastKey = -10, rate = 0.35;
   for (let i = 0; i < plan.length && !cancelled; i++) {
     const seg = plan[i];
     await useSrc(seg.src); await seekTo(seg.start);
     video.muted = true;
     const res = await encodeSegment(seg, offset, W, H, venc, i > 0, i < plan.length - 1, rate, () => lastTs, (ts, key) => { lastTs = ts; if (key) lastKey = ts; }, () => lastKey);
     if (encErr) throw encErr;
-    // adapt playback speed: slow down if this phone missed frames, speed up if it kept up easily
-    if (res.frames > 5) rate = res.drops / res.frames > 0.03 ? Math.max(0.25, rate * 0.7) : (res.drops === 0 ? Math.min(1, rate * 1.2) : rate);
+    rate = res.rate;
     snapCanvas.width = W; snapCanvas.height = H; drawVideo(snapCtx, W, H);
     offset += seg.end - seg.start;
   }
@@ -1317,9 +1332,10 @@ async function renderPrecise(W, H) {
 function encodeSegment(seg, offset, W, H, venc, hasPrev, hasNext, rate, getLast, setLast, getKey) {
   return new Promise((resolve, reject) => {
     let finished = false, frames = 0, drops = 0, lastMt = -1, lastCb = performance.now(), waiting = false;
+    let minGap = 1, winFrames = 0, winDrops = 0, calm = 0, retries = 0;
     const end = () => {
       if (finished) return; finished = true; clearInterval(guard);
-      video.removeEventListener('ended', end); video.pause(); resolve({ frames, drops });
+      video.removeEventListener('ended', end); video.pause(); resolve({ frames, drops, rate });
     };
     video.addEventListener('ended', end);
     const onFrame = async (now, meta) => {
@@ -1329,8 +1345,30 @@ function encodeSegment(seg, offset, W, H, venc, hasPrev, hasNext, rate, getLast,
       const mt = meta && typeof meta.mediaTime === 'number' ? meta.mediaTime : video.currentTime;
       if (mt >= seg.end - 0.005 || (video.duration && mt >= video.duration - 0.02)) return end();
       if (mt >= seg.start - 0.02) {
-        if (lastMt >= 0 && mt - lastMt > 0.05) drops++;
-        lastMt = mt; frames++;
+        // already have this frame (we just stepped back) → wait for the next one
+        if (lastMt >= 0 && mt <= lastMt + 0.002) { video.requestVideoFrameCallback(onFrame); return; }
+        // a gap bigger than ~1.6 source frames means the phone skipped a frame:
+        // slow down, step back to the missed spot and pick it up again
+        if (lastMt >= 0) {
+          const gap = mt - lastMt;
+          if (gap > 0.004) minGap = Math.min(minGap, gap);
+          if (gap > Math.max(minGap * 1.6, 0.02)) {
+            drops++; winDrops++;
+            if (retries < 3) {
+              retries++;
+              rate = Math.max(0.12, rate * 0.6); video.playbackRate = rate; winFrames = winDrops = 0; calm = 0;
+              waiting = true; video.pause();
+              await seekTo(lastMt + minGap * 0.5);
+              waiting = false; lastCb = performance.now();
+              if (!finished) { video.requestVideoFrameCallback(onFrame); video.play().catch(() => {}); }
+              return;
+            }
+          }
+        }
+        retries = 0;
+        lastMt = mt; frames++; winFrames++;
+        if (winDrops && rate > 0.12) { rate = Math.max(0.12, rate * 0.6); video.playbackRate = rate; winFrames = winDrops = 0; calm = 0; }
+        else if (winFrames >= 20) { calm += winFrames; winFrames = winDrops = 0; if (calm >= 90 && rate < 1) { rate = Math.min(1, rate * 1.15); video.playbackRate = rate; calm = 0; } }
         const tOut = offset + Math.max(0, mt - seg.start);
         drawVideo(ctx, W, H);
         drawTransition(ctx, W, H, mt - seg.start, hasNext ? seg.end - mt : Infinity, hasPrev);

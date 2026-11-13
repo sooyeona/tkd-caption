@@ -1,4 +1,4 @@
-const CACHE = 'tkd-v26';
+const CACHE = 'tkd-v27';
 const MODEL = 'tkd-model-v2';
 const SHELL = ['./', 'index.html', 'app.js', 'fonts.css', 'manifest.webmanifest', 'icon-180.png', 'icon-512.png'];
 
