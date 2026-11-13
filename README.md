@@ -49,5 +49,5 @@
 
 ## 사용한 오픈소스
 - TensorFlow.js, COCO-SSD 모델 (Apache License 2.0)
-- mp4-muxer (MIT)
+- mp4-muxer (MIT), mp4box.js (BSD-3-Clause)
 - 검은고딕, 도현, 주아, 감자꽃, 나눔펜, Noto Sans KR 글꼴 (SIL Open Font License 1.1, Fontsource 경유)

@@ -1,5 +1,5 @@
 'use strict';
-const APP_VERSION = '27';
+const APP_VERSION = '28';
 const $ = s => document.querySelector(s);
 
 // [혼자] = only when one child is the focus, [단체] = only when several kids are on screen.
@@ -816,7 +816,7 @@ $('#file').onchange = async e => {
   for (const f of files) {
     setLoader('load', `영상 ${++n} / ${files.length} 불러오는 중… 큰 영상은 조금 걸려요`, (n - 1) / files.length); await paint();
     const url = URL.createObjectURL(f);
-    const s = { name: f.name, size: f.size, url, dur: 0, w: 0, h: 0, scores: null, dt: 1, cls: guessCls(f.name) || S.defCls };
+    const s = { name: f.name, size: f.size, file: f, url, dur: 0, w: 0, h: 0, scores: null, dt: 1, cls: guessCls(f.name) || S.defCls };
     sources.push(s);
     try {
       curSrc = -1; await useSrc(sources.length - 1);
@@ -1292,6 +1292,106 @@ async function encodeAudio(abuf, muxer) {
   }
   await enc.flush(); enc.close();
 }
+// ---------- direct decoding (no playback) ----------
+// Each clip is unpacked with mp4box and only the frames we need are decoded by the phone's hardware
+// decoder, one by one. Nothing is "played", so no frame can be skipped, and it usually runs faster than real time.
+function needRanges(src) {
+  return plan.filter(p => p.src === src).map(p => [p.start, p.end]);
+}
+async function demuxSource(s, ranges) {
+  if (!window.MP4Box) await addScript('lib/mp4box.all.min.js');
+  const mp4 = MP4Box.createFile();
+  let track = null, desc = null, rot = 0, err = null;
+  const samples = [];
+  const keepFrom = Math.min(...ranges.map(r => r[0])) - 8, keepTo = Math.max(...ranges.map(r => r[1])) + 1;
+  const wanted = t => ranges.some(([a, b]) => t >= a - 8 && t <= b + 1);
+  mp4.onError = e => { err = e; };
+  mp4.onReady = info => {
+    track = info.videoTracks && info.videoTracks[0];
+    if (!track) return;
+    const trak = mp4.getTrackById(track.id);
+    for (const entry of trak.mdia.minf.stbl.stsd.entries) {
+      const box = entry.avcC || entry.hvcC || entry.vpcC || entry.av1C;
+      if (box) { const st = new DataStream(undefined, 0, DataStream.BIG_ENDIAN); box.write(st); desc = new Uint8Array(st.buffer, 8); break; }
+    }
+    const m = track.matrix || [65536, 0, 0, 0, 65536, 0, 0, 0, 1 << 30];
+    rot = ((Math.round(Math.atan2(m[1], m[0]) * 180 / Math.PI) % 360) + 360) % 360;
+    mp4.setExtractionOptions(track.id, null, { nbSamples: 500 });
+    mp4.start();
+  };
+  mp4.onSamples = (id, user, list) => {
+    for (const x of list) {
+      const t = x.cts / x.timescale;
+      samples.push({ cts: x.cts, dts: x.dts, dur: x.duration, ts: x.timescale, key: x.is_sync, data: wanted(t) ? new Uint8Array(x.data) : null });
+    }
+    mp4.releaseUsedSamples(id, list[list.length - 1].number + 1);
+  };
+  const CH = 4 * 1024 * 1024;
+  for (let pos = 0; pos < s.file.size && !err; pos += CH) {
+    const buf = await s.file.slice(pos, pos + CH).arrayBuffer();
+    buf.fileStart = pos; mp4.appendBuffer(buf);
+  }
+  mp4.flush();
+  if (err || !track || !samples.length) return null;
+  let codec = track.codec;
+  // the browser already shows the clip upright; trust it if the matrix disagrees
+  const W0 = track.track_width || track.video.width, H0 = track.track_height || track.video.height;
+  if (((rot % 180 ? H0 > W0 : W0 > H0) !== (s.w > s.h)) && s.w !== s.h) rot = (rot + 90) % 360;
+  const cfg = { codec, codedWidth: track.video.width, codedHeight: track.video.height, ...(desc ? { description: desc } : {}) };
+  try { const r = await VideoDecoder.isConfigSupported(cfg); if (!r.supported) return null; } catch (e) { return null; }
+  return { cfg, samples, rot, keepFrom, keepTo };
+}
+function drawFrame(c, frame, rot, W, H) {
+  const fw = frame.displayWidth, fh = frame.displayHeight;
+  const rw = rot % 180 ? fh : fw, rh = rot % 180 ? fw : fh;
+  const contain = Math.min(W / rw, H / rh), cover = Math.max(W / rw, H / rh);
+  const sc = cover / contain < 1.12 ? cover : contain;
+  if (sc === contain) { c.fillStyle = '#000'; c.fillRect(0, 0, W, H); }
+  c.save(); c.translate(W / 2, H / 2); if (rot) c.rotate(rot * Math.PI / 180);
+  c.drawImage(frame, -fw * sc / 2, -fh * sc / 2, fw * sc, fh * sc);
+  c.restore();
+}
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+async function decodeSegmentDirect(d, seg, offset, W, H, venc, hasPrev, hasNext, getLast, setLast, getKey) {
+  const S0 = d.samples;
+  let k0 = -1;
+  for (let i = 0; i < S0.length; i++) if (S0[i].key && S0[i].data && S0[i].cts / S0[i].ts <= seg.start + 0.001) k0 = i;
+  if (k0 < 0) k0 = S0.findIndex(x => x.key && x.data);
+  if (k0 < 0) throw new Error('no keyframe');
+  let lastFrame = null, err = null;
+  const dec = new VideoDecoder({
+    output: frame => {
+      const t = frame.timestamp / 1e6;
+      if (cancelled || t < seg.start - 0.001 || t >= seg.end) { frame.close(); return; }
+      const tOut = offset + (t - seg.start);
+      let ts = Math.round(tOut * 1e6);
+      if (getLast() >= 0 && ts < getLast() + 30000) { frame.close(); return; }   // keep the output at 30 fps max
+      drawFrame(ctx, frame, d.rot, W, H);
+      drawTransition(ctx, W, H, t - seg.start, hasNext ? seg.end - t : Infinity, hasPrev);
+      drawOverlay(ctx, W, H, tOut);
+      const key = ts - getKey() >= 2e6;
+      const vf = new VideoFrame(canvas, { timestamp: ts, duration: 33333 });
+      try { venc.encode(vf, { keyFrame: key }); } catch (e) { err = e; }
+      vf.close(); setLast(ts, key); setProg(tOut);
+      if (lastFrame) lastFrame.close();
+      lastFrame = frame;
+    },
+    error: e => { err = e; }
+  });
+  dec.configure(d.cfg);
+  for (let i = k0; i < S0.length && !cancelled && !err; i++) {
+    const x = S0[i];
+    if (x.dts / x.ts >= seg.end + 0.4) break;
+    if (!x.data) continue;
+    while ((dec.decodeQueueSize > 6 || venc.encodeQueueSize > 6) && !err && !cancelled) await sleep(2);
+    dec.decode(new EncodedVideoChunk({ type: x.key ? 'key' : 'delta', timestamp: Math.round(x.cts / x.ts * 1e6), duration: Math.round(x.dur / x.ts * 1e6), data: x.data }));
+  }
+  if (!cancelled && !err) await dec.flush();
+  try { dec.close(); } catch (e) {}
+  if (err) throw err;
+  if (lastFrame) { snapCanvas.width = W; snapCanvas.height = H; drawFrame(snapCtx, lastFrame, d.rot, W, H); lastFrame.close(); }
+}
+
 async function renderPrecise(W, H) {
   if (!window.Mp4Muxer) await addScript('lib/mp4-muxer.js');
   const vcfg = await pickVideoConfig(W, H);
@@ -1311,15 +1411,32 @@ async function renderPrecise(W, H) {
   const venc = new VideoEncoder({ output: (chunk, meta) => muxer.addVideoChunk(chunk, meta), error: e => { encErr = e; } });
   venc.configure(vcfg);
 
+  // unpack the clips we need; any clip the phone can't decode directly falls back to playback mode
+  const direct = {};
+  if (window.VideoDecoder && window.EncodedVideoChunk) {
+    const used = [...new Set(plan.map(p => p.src))];
+    for (let n = 0; n < used.length && !cancelled; n++) {
+      $('#progText').textContent = `영상 준비 중… ${n + 1} / ${used.length}`;
+      try { direct[used[n]] = await demuxSource(sources[used[n]], needRanges(used[n])); } catch (e) { console.error(e); direct[used[n]] = null; }
+    }
+  }
   let offset = 0, lastTs = -1, lastKey = -10, rate = 0.35;
+  const getLast = () => lastTs, setLast = (ts, key) => { lastTs = ts; if (key) lastKey = ts; }, getKey = () => lastKey;
   for (let i = 0; i < plan.length && !cancelled; i++) {
-    const seg = plan[i];
-    await useSrc(seg.src); await seekTo(seg.start);
-    video.muted = true;
-    const res = await encodeSegment(seg, offset, W, H, venc, i > 0, i < plan.length - 1, rate, () => lastTs, (ts, key) => { lastTs = ts; if (key) lastKey = ts; }, () => lastKey);
+    const seg = plan[i], d = direct[seg.src];
+    let done = false;
+    if (d) {
+      try { await decodeSegmentDirect(d, seg, offset, W, H, venc, i > 0, i < plan.length - 1, getLast, setLast, getKey); done = true; }
+      catch (e) { console.error('direct decode failed, using playback', e); direct[seg.src] = null; }
+    }
+    if (!done && !cancelled) {
+      await useSrc(seg.src); await seekTo(seg.start);
+      video.muted = true;
+      const res = await encodeSegment(seg, offset, W, H, venc, i > 0, i < plan.length - 1, rate, getLast, setLast, getKey);
+      rate = res.rate;
+      snapCanvas.width = W; snapCanvas.height = H; drawVideo(snapCtx, W, H);
+    }
     if (encErr) throw encErr;
-    rate = res.rate;
-    snapCanvas.width = W; snapCanvas.height = H; drawVideo(snapCtx, W, H);
     offset += seg.end - seg.start;
   }
   video.pause(); video.playbackRate = 1;

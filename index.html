@@ -10,9 +10,9 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="태권 자막">
 <link rel="manifest" href="manifest.webmanifest">
-<link rel="apple-touch-icon" href="icon-180.png?v=27">
+<link rel="apple-touch-icon" href="icon-180.png?v=28">
 <link rel="icon" href="icon-180.png">
-<link rel="stylesheet" href="fonts.css?v=27">
+<link rel="stylesheet" href="fonts.css?v=28">
 <style>
 :root{--bg:#F6F4EF;--card:#fff;--ink:#1f1f1f;--sub:#6b6a66;--line:#e4e1d9;--red:#D7263D;--yellow:#FFD43B}
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
@@ -102,7 +102,7 @@ textarea{min-height:150px;line-height:1.6}
 </head>
 <body>
 <main>
-  <header><img src="icon-180.png?v=27" alt="" width="38" height="38" style="border-radius:10px;image-rendering:pixelated"><h1>태권 <span>자막</span></h1><small id="ver" style="margin-left:auto;color:var(--sub);font-size:12px"></small></header>
+  <header><img src="icon-180.png?v=28" alt="" width="38" height="38" style="border-radius:10px;image-rendering:pixelated"><h1>태권 <span>자막</span></h1><small id="ver" style="margin-left:auto;color:var(--sub);font-size:12px"></small></header>
 
   <p class="hint hidden" id="fileWarn" style="background:#FCEBEB;color:#791F1F;border-radius:12px;padding:12px 14px;margin:0 0 14px">파일을 직접 열어서(file://) 보고 있어요. 이 방식은 브라우저 보안 때문에 <b>혼자/단체 감지</b>와 <b>활동 장면 고르기</b>가 동작하지 않아요. 깃허브에 올린 주소(https://…github.io/…)로 열어서 써주세요.</p>
   <section class="card">
@@ -130,7 +130,7 @@ textarea{min-height:150px;line-height:1.6}
 
   <section class="card">
     <h2><span class="n">2</span>미리보기</h2>
-    <div class="stagewrap"><div id="renderNote" class="hidden">만드는 중이라 화면이 느리게 보여요<br><b>완성 영상은 부드러워요</b></div><video id="src" playsinline preload="auto" muted></video><canvas id="stage" class="hidden"></canvas><div class="empty" id="empty">영상을 고르면 자막이 들어간 모습이 여기 보여요</div></div>
+    <div class="stagewrap"><div id="renderNote" class="hidden">만드는 중 화면은 실제 속도와 달라요<br><b>완성 영상은 부드러워요</b></div><video id="src" playsinline preload="auto" muted></video><canvas id="stage" class="hidden"></canvas><div class="empty" id="empty">영상을 고르면 자막이 들어간 모습이 여기 보여요</div></div>
     <p class="hint">아래에서 바꾸는 내용이 바로 반영돼요. 자막 목록의 시간을 누르면 그 장면으로 이동해요.</p>
   </section>
 
@@ -243,7 +243,7 @@ textarea{min-height:150px;line-height:1.6}
     <div id="progWrap" class="hidden">
       <div class="prog"><i id="progBar"></i></div>
       <p class="hint" id="progText"></p>
-      <p class="hint">만드는 동안 화면을 켜두고 앱을 닫지 마세요. 끊김 없이 만들려고 프레임을 하나씩 처리해서, 폰에 따라 완성 영상 길이의 2~5배 정도 걸려요.</p>
+      <p class="hint">만드는 동안 화면을 켜두고 앱을 닫지 마세요. 끊김 없이 만들려고 프레임을 하나씩 처리해서, 보통 완성 영상 길이보다 짧게 걸려요.</p>
       <button class="btn ghost sm" id="cancel" style="margin-top:8px">취소</button>
     </div>
   </section>
@@ -267,6 +267,6 @@ textarea{min-height:150px;line-height:1.6}
   </div>
 </div>
 <div class="toast" id="toast"></div>
-<script src="app.js?v=27"></script>
+<script src="app.js?v=28"></script>
 </body>
 </html>
