@@ -1,5 +1,5 @@
 'use strict';
-const APP_VERSION = '25';
+const APP_VERSION = '26';
 const $ = s => document.querySelector(s);
 
 // [혼자] = only when one child is the focus, [단체] = only when several kids are on screen.
@@ -816,7 +816,7 @@ $('#file').onchange = async e => {
   for (const f of files) {
     setLoader('load', `영상 ${++n} / ${files.length} 불러오는 중… 큰 영상은 조금 걸려요`, (n - 1) / files.length); await paint();
     const url = URL.createObjectURL(f);
-    const s = { name: f.name, url, dur: 0, w: 0, h: 0, scores: null, dt: 1, cls: guessCls(f.name) || S.defCls };
+    const s = { name: f.name, size: f.size, url, dur: 0, w: 0, h: 0, scores: null, dt: 1, cls: guessCls(f.name) || S.defCls };
     sources.push(s);
     try {
       curSrc = -1; await useSrc(sources.length - 1);
@@ -1112,14 +1112,21 @@ function setProg(done) {
 $('#make').onclick = async () => {
   if (busy || analyzing || !plan.length) return;
   S.names = $('#names').value; refreshNames();
+  const precise = canPrecise();
   const mime = pickMime();
-  if (mime === null || !canvas.captureStream) { alert('이 브라우저는 영상 저장을 지원하지 않아요. iOS 15 이상 사파리에서 열어주세요.'); return; }
+  if (!precise && (mime === null || !canvas.captureStream)) { alert('이 브라우저는 영상 저장을 지원하지 않아요. 최신 iOS 사파리에서 열어주세요.'); return; }
 
   // must happen synchronously inside the tap (iOS)
-  const wantAudio = S.origVol > 0 || S.music !== 'none';
-  const audioTrack = wantAudio ? setupAudio() : null;
-  if (origGain) origGain.gain.value = S.origVol / 100;
-  video.muted = !audioTrack;
+  let audioTrack = null;
+  if (precise) {
+    video.muted = true;
+    if (actx && actx.state !== 'running') actx.resume().catch(() => {});   // a suspended graph would stall the video element
+  } else {
+    const wantAudio = S.origVol > 0 || S.music !== 'none';
+    audioTrack = wantAudio ? setupAudio() : null;
+    if (origGain) origGain.gain.value = S.origVol / 100;
+    video.muted = !audioTrack;
+  }
   const unlock = video.play().then(() => video.pause()).catch(() => {});
 
   busy = true; cancelled = false;
@@ -1131,9 +1138,14 @@ $('#make').onclick = async () => {
     await unlock; await ensureFont(10000);
     spriteCache.clear();
     releaseDetector();
-    if (actx && S.music === 'beat') { try { await renderBeat(actx.sampleRate); } catch (e) { console.error(e); } }
     const { W, H } = OUT;
     canvas.width = W; canvas.height = H;
+    if (precise) {
+      const blob = await renderPrecise(W, H);
+      if (cancelled || !blob) { toast('취소했어요'); return; }
+      outBlob = blob; showResult(); return;
+    }
+    if (actx && S.music === 'beat') { try { await renderBeat(actx.sampleRate); } catch (e) { console.error(e); } }
     const stream = canvas.captureStream(30);
     if (audioTrack) stream.addTrack(audioTrack);
     const rec = new MediaRecorder(stream, { ...(mime ? { mimeType: mime } : {}), videoBitsPerSecond: 5000000, audioBitsPerSecond: 128000 });
@@ -1167,12 +1179,7 @@ $('#make').onclick = async () => {
 
     const type = (chunks[0] && chunks[0].type) || mime || 'video/mp4';
     outBlob = new Blob(chunks, { type: type.split(';')[0] });
-    if (outURL) URL.revokeObjectURL(outURL);
-    outURL = URL.createObjectURL(outBlob);
-    $('#out').src = outURL;
-    $('#result').classList.remove('hidden');
-    $('#result').scrollIntoView({ behavior: 'smooth' });
-    toast('완성!');
+    showResult();
   } catch (err) {
     console.error(err);
     alert('만드는 중 문제가 생겼어요: ' + (err && err.message || err));
@@ -1184,6 +1191,178 @@ $('#make').onclick = async () => {
   }
 };
 $('#cancel').onclick = () => { cancelled = true; video.pause(); };
+function showResult() {
+  if (outURL) URL.revokeObjectURL(outURL);
+  outURL = URL.createObjectURL(outBlob);
+  $('#out').src = outURL;
+  $('#result').classList.remove('hidden');
+  $('#result').scrollIntoView({ behavior: 'smooth' });
+  toast('완성!');
+}
+
+// ---------- precise rendering (WebCodecs) ----------
+// Instead of recording the screen in real time (which drops frames when the phone is busy), every
+// video frame is drawn and encoded with its exact timestamp, and the sound is mixed offline.
+// The phone may take longer than real time, but the result never stutters.
+// checked once at start-up: precise mode needs a video encoder AND an audio encoder (AAC, or Opus as a fallback)
+let preciseAudio = null;
+(async () => {
+  if (!(window.VideoEncoder && window.VideoFrame && window.AudioEncoder && window.AudioData &&
+    (window.OfflineAudioContext || window.webkitOfflineAudioContext) && 'requestVideoFrameCallback' in HTMLVideoElement.prototype)) return;
+  for (const [codec, mux] of [['mp4a.40.2', 'aac'], ['opus', 'opus']]) {
+    try { if ((await AudioEncoder.isConfigSupported({ codec, sampleRate: 48000, numberOfChannels: 2, bitrate: 128000 })).supported) { preciseAudio = { codec, mux }; return; } } catch (e) {}
+  }
+})();
+function canPrecise() { return !!preciseAudio; }
+async function pickVideoConfig(W, H) {
+  for (const codec of ['avc1.640028', 'avc1.4d0028', 'avc1.42e01f', 'avc1.42001f']) {
+    const cfg = { codec, width: W, height: H, bitrate: 6000000, framerate: 30, avc: { format: 'avc' } };
+    try { const r = await VideoEncoder.isConfigSupported(cfg); if (r && r.supported) return cfg; } catch (e) {}
+  }
+  return null;
+}
+const decodeAudio = (ctx, ab) => new Promise((res, rej) => { const p = ctx.decodeAudioData(ab, res, rej); if (p && p.then) p.then(res, rej); });
+async function buildAudio() {
+  if (S.origVol <= 0 && S.music === 'none') return null;
+  const sr = 48000, OAC = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+  const oc = new OAC(2, Math.ceil((total + 0.2) * sr), sr);
+  const comp = oc.createDynamicsCompressor();
+  comp.threshold.value = -14; comp.ratio.value = 4; comp.attack.value = 0.005; comp.release.value = 0.2;
+  const master = oc.createGain(); master.gain.value = 0.9; comp.connect(master).connect(oc.destination);
+  const fades = S.trans !== 'none';
+  if (S.origVol > 0) {
+    let skipped = 0;
+    for (const i of new Set(plan.map(p => p.src))) {
+      const s = sources[i];
+      if (s.audioBuf !== undefined) continue;
+      s.audioBuf = null;
+      if (s.size > 400e6) { skipped++; continue; }           // too big to decode safely on a phone
+      try { s.audioBuf = await decodeAudio(oc, await (await fetch(s.url)).arrayBuffer()); } catch (e) { skipped++; }
+    }
+    if (skipped) toast('일부 영상의 원본 소리는 넣지 못했어요');
+    let off = 0;
+    plan.forEach((seg, i) => {
+      const L = seg.end - seg.start, buf = sources[seg.src].audioBuf, v = S.origVol / 100;
+      if (buf && seg.start < buf.duration) {
+        const src = oc.createBufferSource(), g = oc.createGain(); src.buffer = buf;
+        g.gain.setValueAtTime(fades && i > 0 ? 0 : v, off);
+        if (fades && i > 0) g.gain.linearRampToValueAtTime(v, off + 0.25);
+        if (fades && i < plan.length - 1) { g.gain.setValueAtTime(v, Math.max(off, off + L - 0.25)); g.gain.linearRampToValueAtTime(0, off + L); }
+        src.connect(g).connect(comp); src.start(off, seg.start, Math.min(L, buf.duration - seg.start));
+      }
+      off += L;
+    });
+  }
+  if (S.music !== 'none') {
+    const buf = S.music === 'file' && musicBuf ? musicBuf : await renderBeat(sr);
+    const src = oc.createBufferSource(), g = oc.createGain(), v = S.musicVol / 100;
+    src.buffer = buf; src.loop = true;
+    g.gain.setValueAtTime(0.0001, 0); g.gain.linearRampToValueAtTime(v, 0.8);
+    g.gain.setValueAtTime(v, Math.max(0.9, total - 2.5)); g.gain.linearRampToValueAtTime(0.0001, total);
+    src.connect(g).connect(comp); src.start(0); src.stop(total + 0.1);
+  }
+  return await new Promise((res, rej) => { const p = oc.startRendering(); if (p && p.then) p.then(res, rej); else oc.oncomplete = e => res(e.renderedBuffer); });
+}
+async function encodeAudio(abuf, muxer) {
+  const enc = new AudioEncoder({ output: (chunk, meta) => muxer.addAudioChunk(chunk, meta), error: e => console.error(e) });
+  enc.configure({ codec: preciseAudio.codec, sampleRate: abuf.sampleRate, numberOfChannels: 2, bitrate: 128000 });
+  const L = abuf.getChannelData(0), R = abuf.numberOfChannels > 1 ? abuf.getChannelData(1) : L, N = 4096;
+  for (let i = 0; i < abuf.length; i += N) {
+    const n = Math.min(N, abuf.length - i), data = new Float32Array(n * 2);
+    data.set(L.subarray(i, i + n), 0); data.set(R.subarray(i, i + n), n);
+    const ad = new AudioData({ format: 'f32-planar', sampleRate: abuf.sampleRate, numberOfFrames: n, numberOfChannels: 2, timestamp: Math.round(i / abuf.sampleRate * 1e6), data });
+    enc.encode(ad); ad.close();
+    if (enc.encodeQueueSize > 20) await new Promise(r => setTimeout(r, 5));
+  }
+  await enc.flush(); enc.close();
+}
+async function renderPrecise(W, H) {
+  if (!window.Mp4Muxer) await addScript('lib/mp4-muxer.js');
+  const vcfg = await pickVideoConfig(W, H);
+  if (!vcfg) throw new Error('이 기기에서 영상 인코딩을 지원하지 않아요');
+  $('#progText').textContent = '소리 준비 중…'; $('#progBar').style.width = '0%';
+  let abuf = null;
+  try { abuf = await buildAudio(); } catch (e) { console.error(e); toast('소리를 만들지 못해서 소리 없이 만들어요'); }
+
+  if (cancelled) return null;
+  const target = new Mp4Muxer.ArrayBufferTarget();
+  const muxer = new Mp4Muxer.Muxer({
+    target, fastStart: 'in-memory', firstTimestampBehavior: 'offset',
+    video: { codec: 'avc', width: W, height: H },
+    ...(abuf ? { audio: { codec: preciseAudio.mux, numberOfChannels: 2, sampleRate: abuf.sampleRate } } : {})
+  });
+  let encErr = null;
+  const venc = new VideoEncoder({ output: (chunk, meta) => muxer.addVideoChunk(chunk, meta), error: e => { encErr = e; } });
+  venc.configure(vcfg);
+
+  let offset = 0, lastTs = -1, lastKey = -10, rate = 0.6;
+  for (let i = 0; i < plan.length && !cancelled; i++) {
+    const seg = plan[i];
+    await useSrc(seg.src); await seekTo(seg.start);
+    video.muted = true;
+    const res = await encodeSegment(seg, offset, W, H, venc, i > 0, i < plan.length - 1, rate, () => lastTs, (ts, key) => { lastTs = ts; if (key) lastKey = ts; }, () => lastKey);
+    if (encErr) throw encErr;
+    // adapt playback speed: slow down if this phone missed frames, speed up if it kept up easily
+    if (res.frames > 5) rate = res.drops / res.frames > 0.03 ? Math.max(0.25, rate * 0.7) : (res.drops === 0 ? Math.min(1, rate * 1.2) : rate);
+    snapCanvas.width = W; snapCanvas.height = H; drawVideo(snapCtx, W, H);
+    offset += seg.end - seg.start;
+  }
+  video.pause(); video.playbackRate = 1;
+  if (cancelled) { try { venc.close(); } catch (e) {} return null; }
+  await venc.flush(); venc.close();
+  if (abuf) { $('#progText').textContent = '소리 합치는 중…'; await encodeAudio(abuf, muxer); }
+  muxer.finalize();
+  return new Blob([target.buffer], { type: 'video/mp4' });
+}
+function encodeSegment(seg, offset, W, H, venc, hasPrev, hasNext, rate, getLast, setLast, getKey) {
+  return new Promise((resolve, reject) => {
+    let finished = false, frames = 0, drops = 0, lastMt = -1, lastCb = performance.now(), waiting = false;
+    const end = () => {
+      if (finished) return; finished = true; clearInterval(guard);
+      video.removeEventListener('ended', end); video.pause(); resolve({ frames, drops });
+    };
+    video.addEventListener('ended', end);
+    const onFrame = async (now, meta) => {
+      if (finished) return;
+      if (cancelled) return end();
+      lastCb = performance.now();
+      const mt = meta && typeof meta.mediaTime === 'number' ? meta.mediaTime : video.currentTime;
+      if (mt >= seg.end - 0.005 || (video.duration && mt >= video.duration - 0.02)) return end();
+      if (mt >= seg.start - 0.02) {
+        if (lastMt >= 0 && mt - lastMt > 0.05) drops++;
+        lastMt = mt; frames++;
+        const tOut = offset + Math.max(0, mt - seg.start);
+        drawVideo(ctx, W, H);
+        drawTransition(ctx, W, H, mt - seg.start, hasNext ? seg.end - mt : Infinity, hasPrev);
+        drawOverlay(ctx, W, H, tOut);
+        let ts = Math.round(tOut * 1e6); if (ts <= getLast()) ts = getLast() + 1000;
+        const key = ts - getKey() >= 2e6;
+        const vf = new VideoFrame(canvas, { timestamp: ts, duration: 33333 });
+        try { venc.encode(vf, { keyFrame: key }); } catch (e) { vf.close(); return reject(e); }
+        vf.close(); setLast(ts, key); setProg(tOut);
+        // let the encoder catch up instead of letting the decoder run ahead
+        if (venc.encodeQueueSize > 6 && !waiting) {
+          waiting = true; video.pause();
+          while (venc.encodeQueueSize > 2 && !cancelled) await new Promise(r => setTimeout(r, 10));
+          waiting = false; lastCb = performance.now();
+          if (!finished) video.play().catch(() => {});
+        }
+      }
+      video.requestVideoFrameCallback(onFrame);
+    };
+    // watchdog: if no frame arrives for a while (stalled decoder), nudge playback or give up on this scene
+    const guard = setInterval(() => {
+      if (finished || waiting) return;
+      const idle = performance.now() - lastCb;
+      if (video.currentTime >= seg.end - 0.02 || video.ended) return end();
+      if (idle > 1500 && video.paused) video.play().catch(() => {});
+      if (idle > 6000) end();
+    }, 300);
+    video.playbackRate = rate;
+    video.requestVideoFrameCallback(onFrame);
+    video.play().catch(err => { clearInterval(guard); reject(err); });
+  });
+}
 
 // pause/resume must be synchronous: awaiting the audio clock here let whole scenes slip past unrecorded
 function holdRecording(rec) {
